@@ -7,7 +7,10 @@ export interface Parcel {
   farmerId: string;
   farmerName: string;
   parcelId: string;
+  mainLotNum: string;         // 본번
+  subLotNum: string;          // 부번
   address: string;
+  sido: string;               // 시도
   ri: string;
   sigungu: string;
   eubmyeondong: string;
@@ -37,7 +40,11 @@ export interface ColumnMapping {
   farmerId: string;
   farmerName?: string;
   parcelId: string;
+  mainLotNum?: string;        // 본번 (분리형)
+  subLotNum?: string;         // 부번 (분리형)
+  parcelIdMode?: 'single' | 'split';  // 통합 / 본번+부번 분리
   address: string;
+  sido?: string;              // 시도
   ri?: string;
   sigungu?: string;
   eubmyeondong?: string;

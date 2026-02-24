@@ -9,6 +9,7 @@ interface ColumnMapperProps {
 }
 
 type RiParseMode = 'auto' | 'column';
+type ParcelIdMode = 'single' | 'split';
 
 interface SystemField {
   key: keyof ColumnMapping;
@@ -23,13 +24,18 @@ const SYSTEM_FIELDS: SystemField[] = [
   { key: 'parcelId',      label: '필지번호',  required: true,  keywords: ['필지번호', '필지 번호', '필지id', '필지코드', '지번'] },
   { key: 'address',       label: '주소',      required: true,  keywords: ['주소', '소재지', '도로명', '지번주소', '소재'] },
   { key: 'ri',            label: '리명',      required: false, keywords: ['리명', '리 명', '마을', '법정리', '행정리'] },
+  { key: 'sido',           label: '시도',      required: false, keywords: ['시도', '시/도', '도명', '광역시'] },
   { key: 'sigungu',       label: '시군구',    required: false, keywords: ['시군구', '시/군/구', '시군', '군구'] },
   { key: 'eubmyeondong',  label: '읍면동',    required: false, keywords: ['읍면동', '읍/면/동', '읍면', '면동'] },
   { key: 'area',          label: '면적',      required: false, keywords: ['면적', '넓이', '재배면적', '경작면적', '규모'] },
   { key: 'cropType',      label: '작물',      required: false, keywords: ['작물', '작목', '품목', '품종', '재배작물'] },
 ];
 
-const REQUIRED_FIELDS: Array<keyof ColumnMapping> = ['farmerId', 'parcelId', 'address'];
+const SPLIT_FIELDS = [
+  { key: 'mainLotNum' as keyof ColumnMapping, label: '본번', keywords: ['본번', '본지번', '주번', '번지'] },
+  { key: 'subLotNum' as keyof ColumnMapping,  label: '부번', keywords: ['부번', '부지번', '호'] },
+];
+
 
 function autoMatch(headers: string[], keywords: string[]): string {
   const lower = (s: string) => s.toLowerCase().replace(/\s/g, '');
@@ -49,8 +55,12 @@ function buildInitialMapping(
     farmerId: existing.farmerId || '',
     farmerName: existing.farmerName || '',
     parcelId: existing.parcelId || '',
+    mainLotNum: existing.mainLotNum || '',
+    subLotNum: existing.subLotNum || '',
+    parcelIdMode: existing.parcelIdMode || 'single',
     address: existing.address || '',
     ri: existing.ri || '',
+    sido: existing.sido || '',
     sigungu: existing.sigungu || '',
     eubmyeondong: existing.eubmyeondong || '',
     area: existing.area || '',
@@ -67,6 +77,22 @@ function buildInitialMapping(
     }
   }
 
+  // 본번/부번 자동 매칭
+  for (const field of SPLIT_FIELDS) {
+    const current = mapping[field.key];
+    if (!current) {
+      const matched = autoMatch(headers, field.keywords);
+      if (matched) {
+        (mapping as unknown as Record<string, string>)[field.key] = matched;
+      }
+    }
+  }
+
+  // 본번이 자동 매칭되었으면 split 모드로 전환
+  if (!existing.parcelIdMode && mapping.mainLotNum) {
+    mapping.parcelIdMode = 'split';
+  }
+
   return mapping;
 }
 
@@ -80,6 +106,9 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
   );
   const [riParseMode, setRiParseMode] = useState<RiParseMode>(
     mapping.ri ? 'column' : 'auto'
+  );
+  const [parcelIdMode, setParcelIdMode] = useState<ParcelIdMode>(
+    mapping.parcelIdMode || 'single'
   );
 
   // Re-run auto-match if headers change
@@ -101,10 +130,29 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
     }
   }, []);
 
-  const isRequiredMapped = REQUIRED_FIELDS.every((f) => {
-    const val = mapping[f];
-    return typeof val === 'string' && val.trim() !== '';
-  });
+  const handleParcelIdModeChange = useCallback((mode: ParcelIdMode) => {
+    setParcelIdMode(mode);
+    setMapping((prev) => ({
+      ...prev,
+      parcelIdMode: mode,
+      // 모드 전환 시 반대쪽 필드 초기화
+      ...(mode === 'single'
+        ? { mainLotNum: '', subLotNum: '' }
+        : { parcelId: '' }),
+    }));
+  }, []);
+
+  const isRequiredMapped = (() => {
+    const baseOk = ['farmerId', 'address'].every((f) => {
+      const val = mapping[f as keyof ColumnMapping];
+      return typeof val === 'string' && val.trim() !== '';
+    });
+    // 필지번호: 분리면 mainLotNum 필수, 통합이면 parcelId 컬럼 또는 주소 자동추출 (항상 OK)
+    const parcelOk = parcelIdMode === 'split'
+      ? !!(mapping.mainLotNum && mapping.mainLotNum.trim())
+      : true; // 통합모드: 컬럼 있으면 사용, 없으면 주소에서 자동 추출
+    return baseOk && parcelOk;
+  })();
 
   const handleComplete = () => {
     if (!isRequiredMapped) return;
@@ -147,8 +195,84 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
         <div className="divide-y divide-gray-100">
           {SYSTEM_FIELDS.map((field) => {
             const isRiField = field.key === 'ri';
+            const isParcelIdField = field.key === 'parcelId';
             const isDisabled = isRiField && riParseMode === 'auto';
             const value = mapping[field.key] ?? '';
+
+            // 필지번호 필드: split 모드일 때 숨김 (본번/부번으로 대체)
+            if (isParcelIdField && parcelIdMode === 'split') {
+              return (
+                <div key={field.key}>
+                  {/* 필지번호 토글 */}
+                  <div className="flex items-center gap-4 px-4 py-3 hover:bg-gray-50/60 transition-colors">
+                    <div className="w-28 flex-shrink-0">
+                      <span className="text-sm font-medium text-gray-700">
+                        {field.label}
+                      </span>
+                      <span className="ml-1 text-red-500 font-semibold">*</span>
+                    </div>
+                    <div className="text-gray-300 flex-shrink-0 text-lg select-none">→</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex gap-2 mb-2">
+                        <button
+                          type="button"
+                          onClick={() => handleParcelIdModeChange('single')}
+                          className="flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                        >
+                          통합 (한 컬럼)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleParcelIdModeChange('split')}
+                          className="flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors border-indigo-500 bg-indigo-50 text-indigo-700"
+                        >
+                          본번 · 부번 분리
+                        </button>
+                      </div>
+                      {/* 본번 */}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs text-gray-500 w-10">본번</span>
+                        <select
+                          value={mapping.mainLotNum ?? ''}
+                          onChange={(e) => handleFieldChange('mainLotNum', e.target.value)}
+                          className={selectClass}
+                        >
+                          <option value="">-- 본번 컬럼 --</option>
+                          {headers.map((h) => (
+                            <option key={h} value={h}>{h}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {/* 부번 */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 w-10">부번</span>
+                        <select
+                          value={mapping.subLotNum ?? ''}
+                          onChange={(e) => handleFieldChange('subLotNum', e.target.value)}
+                          className={selectClass}
+                        >
+                          <option value="">-- 부번 컬럼 (선택) --</option>
+                          {headers.map((h) => (
+                            <option key={h} value={h}>{h}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="w-16 flex-shrink-0 text-right">
+                      {mapping.mainLotNum ? (
+                        <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
+                          매핑됨
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-500">
+                          필수
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
 
             return (
               <div
@@ -170,7 +294,39 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
 
                 {/* Column selector */}
                 <div className="flex-1 min-w-0">
-                  {isRiField ? (
+                  {isParcelIdField && parcelIdMode === 'single' ? (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleParcelIdModeChange('single')}
+                          className="flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors border-indigo-500 bg-indigo-50 text-indigo-700"
+                        >
+                          통합 (한 컬럼)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleParcelIdModeChange('split')}
+                          className="flex-1 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
+                        >
+                          본번 · 부번 분리
+                        </button>
+                      </div>
+                      <select
+                        value={value}
+                        onChange={(e) => handleFieldChange('parcelId', e.target.value)}
+                        className={selectClass}
+                      >
+                        <option value="">-- 필지번호 컬럼 --</option>
+                        {headers.map((h) => (
+                          <option key={h} value={h}>{h}</option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-400">
+                        컬럼이 없으면 주소에서 본번/부번을 자동 추출합니다.
+                      </p>
+                    </div>
+                  ) : isRiField ? (
                     <div className="flex flex-col gap-2">
                       {/* Ri parse mode toggle */}
                       <div className="flex gap-2">
@@ -286,7 +442,7 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
             </span>
           ) : (
             <span className="text-red-500">
-              필수 필드(농가번호, 필지번호, 주소)를 모두 매핑해주세요.
+              필수 필드(농가번호, 주소)를 매핑해주세요. 필지번호는 컬럼 또는 본번·부번을 지정하세요.
             </span>
           )}
         </div>
