@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppLayout } from './components/Layout/AppLayout';
 import { ErrorBoundary } from './components/Layout/ErrorBoundary';
 import { UploadPage } from './pages/UploadPage';
@@ -11,7 +11,7 @@ import { ExportPage } from './pages/ExportPage';
 function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter basename="/parcel-sampling-system">
+      <HashRouter>
         <AppLayout>
           <Routes>
             <Route path="/" element={<Navigate to="/upload" replace />} />
@@ -23,7 +23,7 @@ function App() {
             <Route path="/export" element={<ExportPage />} />
           </Routes>
         </AppLayout>
-      </BrowserRouter>
+      </HashRouter>
     </ErrorBoundary>
   );
 }
