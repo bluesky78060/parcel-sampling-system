@@ -11,7 +11,7 @@ import { ExportPage } from './pages/ExportPage';
 function App() {
   return (
     <ErrorBoundary>
-      <BrowserRouter>
+      <BrowserRouter basename="/parcel-sampling-system">
         <AppLayout>
           <Routes>
             <Route path="/" element={<Navigate to="/upload" replace />} />
