@@ -8,6 +8,7 @@ import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { useGeocoding } from '../hooks/useGeocoding';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
+import { generatePnuForParcels } from '../lib/pnuGenerator';
 import { StatsDashboard } from '../components/Analysis/StatsDashboard';
 import { RiDistributionChart } from '../components/Analysis/RiDistributionChart';
 import { GeocodingProgress } from '../components/Analysis/GeocodingProgress';
@@ -29,6 +30,14 @@ export function AnalyzePage() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [distantRis, setDistantRis] = useState<DistantRiInfo[]>([]);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  // PNU 생성 상태
+  const [pnuGenResult, setPnuGenResult] = useState<{
+    generated: number;
+    skipped: number;
+    errors: string[];
+  } | null>(null);
+  const [isGeneratingPnu, setIsGeneratingPnu] = useState(false);
 
   const masterFile = files.find((f) => f.role === 'master');
   const sampled2024 = files.find((f) => f.year === 2024 && f.role === 'sampled');
@@ -241,6 +250,40 @@ export function AnalyzePage() {
     }
   }, [parcelStore, geocoding, computeDistantRis]);
 
+  // PNU 코드 자동 생성
+  const runPnuGeneration = useCallback((overwrite = false) => {
+    setIsGeneratingPnu(true);
+    setPnuGenResult(null);
+
+    try {
+      // 공익직불제 필지 PNU 생성
+      const { updated: updatedAll, result: resultAll } = generatePnuForParcels(
+        parcelStore.allParcels,
+        overwrite
+      );
+      parcelStore.updateParcels(updatedAll);
+
+      // 대표필지 PNU 생성
+      let repGenerated = 0;
+      if (parcelStore.representativeParcels.length > 0) {
+        const { updated: updatedRep, result: resultRep } = generatePnuForParcels(
+          parcelStore.representativeParcels,
+          overwrite
+        );
+        parcelStore.setRepresentativeParcels(updatedRep);
+        repGenerated = resultRep.generated;
+      }
+
+      setPnuGenResult({
+        generated: resultAll.generated + repGenerated,
+        skipped: resultAll.skipped,
+        errors: [...new Set(resultAll.errors)].slice(0, 10),
+      });
+    } finally {
+      setIsGeneratingPnu(false);
+    }
+  }, [parcelStore]);
+
   // 이미 분석된 상태면 재분석 없이 바로 표시
   useEffect(() => {
     if (parcelStore.allParcels.length > 0) {
@@ -372,6 +415,90 @@ export function AnalyzePage() {
               </ul>
             </div>
           )}
+
+          {/* PNU 코드 자동 생성 */}
+          <div className="rounded-lg border border-indigo-100 bg-indigo-50 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="w-5 h-5 text-indigo-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 20l4-16m2 16l4-16M6 9h14M4 15h14" />
+                </svg>
+                <div>
+                  <p className="text-sm font-medium text-indigo-800">PNU 코드 자동 생성</p>
+                  <p className="text-xs text-indigo-600">
+                    읍면동·리·본번·부번 정보로 19자리 PNU 코드를 생성합니다. (봉화군 전용)
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+                {pnuGenResult && (
+                  <button
+                    onClick={() => runPnuGeneration(true)}
+                    disabled={isGeneratingPnu}
+                    className="inline-flex items-center gap-1.5 px-3 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    전체 재생성
+                  </button>
+                )}
+                <button
+                  onClick={() => runPnuGeneration(false)}
+                  disabled={isGeneratingPnu}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                >
+                  {isGeneratingPnu ? (
+                    <>
+                      <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      생성 중...
+                    </>
+                  ) : (
+                    <>PNU 생성</>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {/* PNU 생성 결과 */}
+            {pnuGenResult && (
+              <div className="mt-3 pt-3 border-t border-indigo-200">
+                <div className="flex items-center gap-4 text-sm">
+                  <span className="inline-flex items-center gap-1 text-green-700">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    생성 {pnuGenResult.generated}건
+                  </span>
+                  {pnuGenResult.skipped > 0 && (
+                    <span className="text-gray-500">
+                      기존 유지 {pnuGenResult.skipped}건
+                    </span>
+                  )}
+                  {pnuGenResult.errors.length > 0 && (
+                    <span className="text-amber-600">
+                      매핑 실패 {pnuGenResult.errors.length}건
+                    </span>
+                  )}
+                </div>
+                {pnuGenResult.errors.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-700">
+                      매핑 실패 상세 보기
+                    </summary>
+                    <ul className="mt-1 text-xs text-amber-700 space-y-0.5 ml-4">
+                      {pnuGenResult.errors.map((err, i) => (
+                        <li key={i}>- {err}</li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* 좌표 변환 (수동 실행) */}
           {geocoding.isAvailable && !geocoding.state.isRunning && !geocoding.state.isComplete && (
