@@ -59,16 +59,30 @@ export function isSameAddress(addr1: string, addr2: string): boolean {
  * 예: "충남 아산시 염치읍 강청리 123-4" → { mainLotNum: "123", subLotNum: "4" }
  * 예: "충남 아산시 염치읍 강청리 산123-4" → { mainLotNum: "산123", subLotNum: "4" }
  * 예: "충남 아산시 염치읍 강청리 123" → { mainLotNum: "123", subLotNum: "" }
+ * 예: "경북 봉화군 봉화읍 거촌리 127번지" → { mainLotNum: "127", subLotNum: "" }
+ * 예: "경북 봉화군 봉화읍 내성리 183-2 목련맨션 103호" → { mainLotNum: "183", subLotNum: "2" }
  */
 export function parseLotNumber(address: string): { mainLotNum: string; subLotNum: string } {
-  // 주소 끝부분에서 (산)숫자-숫자 또는 (산)숫자 패턴 추출
-  const match = address.match(/(산?\d+)(?:-(\d+))?(?:\s*$)/);
-  if (match) {
+  // 리/동/읍/면 뒤의 지번을 추출 (가장 정확한 패턴)
+  // "강청리 123-4", "강청리 산123", "거촌리 127번지", "내성리 183-2 목련맨션"
+  const afterRi = address.match(/[가-힣]+(?:리|동|읍|면)\s+(산?\d+)(?:-(\d+))?/);
+  if (afterRi) {
     return {
-      mainLotNum: match[1],
-      subLotNum: match[2] ?? '',
+      mainLotNum: afterRi[1],
+      subLotNum: afterRi[2] ?? '',
     };
   }
+
+  // 리/동 뒤 패턴 실패 시: 주소에서 첫 번째 지번 패턴 추출
+  // "번지" 접미사, 후행 건물정보 허용
+  const lotMatch = address.match(/(산?\d+)(?:-(\d+))?(?:번지)?(?:\s|$|,)/);
+  if (lotMatch) {
+    return {
+      mainLotNum: lotMatch[1],
+      subLotNum: lotMatch[2] ?? '',
+    };
+  }
+
   return { mainLotNum: '', subLotNum: '' };
 }
 
@@ -105,6 +119,7 @@ export function buildParcelId(mainLotNum: string, subLotNum: string): string {
   const main = mainLotNum.trim();
   const sub = subLotNum.trim();
   if (!main) return '';
-  if (!sub || sub === '0') return main;
+  // "0", "00", "000" 등 모든 영-부번을 무시
+  if (!sub || /^0+$/.test(sub)) return main;
   return `${main}-${sub}`;
 }

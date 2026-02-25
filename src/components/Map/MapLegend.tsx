@@ -6,6 +6,7 @@ interface MapLegendProps {
     sampled2025: number;
     noCoords: number;
   };
+  horizontal?: boolean;
 }
 
 interface LegendItem {
@@ -15,7 +16,7 @@ interface LegendItem {
   borderColor?: string;
 }
 
-export function MapLegend({ counts }: MapLegendProps) {
+export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
   const items: LegendItem[] = [
     {
       color: '#2563eb',
@@ -44,6 +45,32 @@ export function MapLegend({ counts }: MapLegendProps) {
       borderColor: '#d97706',
     },
   ];
+
+  if (horizontal) {
+    return (
+      <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-4 py-2.5 z-10">
+        <div className="flex items-center gap-5 flex-wrap">
+          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">범례</span>
+          <div className="h-4 w-px bg-gray-200" />
+          {items.map((item) => (
+            <div key={item.label} className="flex items-center gap-1.5">
+              <span
+                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                style={{
+                  backgroundColor: item.color,
+                  border: item.borderColor ? `2px solid ${item.borderColor}` : undefined,
+                }}
+              />
+              <span className="text-xs text-gray-600">{item.label}</span>
+              <span className="text-xs font-semibold text-gray-800 tabular-nums">
+                {item.count.toLocaleString()}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-4 z-10">

@@ -9,12 +9,13 @@ export function MappingPage() {
   const { files, activeFileId, setActiveFile } = useFileStore();
   const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
 
-  // 파일이 없으면 업로드 페이지로 리다이렉트
+  // 파일이 없으면 업로드 페이지로 리다이렉트 (마운트 시 1회만)
   useEffect(() => {
     if (files.length === 0) {
       navigate('/upload');
     }
-  }, [files, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // 초기 활성 파일 설정
   useEffect(() => {

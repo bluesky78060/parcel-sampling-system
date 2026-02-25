@@ -76,8 +76,9 @@ export function applyColumnMapping(
   fileSource: string,
   year?: number
 ): Parcel[] {
-  return rows.map(row => {
+  const parcels = rows.map(row => {
     const address = String(row[mapping.address] ?? '');
+    const farmerAddress = mapping.farmerAddress ? String(row[mapping.farmerAddress] ?? '') : '';
     const ri = mapping.ri ? String(row[mapping.ri] ?? '') : parseRiFromAddress(address);
 
     // 필지번호: 통합(single) 또는 본번+부번 분리(split)
@@ -122,18 +123,44 @@ export function applyColumnMapping(
       mainLotNum,
       subLotNum,
       address,
+      farmerAddress,
       sido: mapping.sido ? String(row[mapping.sido] ?? '') : parseSido(address),
       ri,
       sigungu: mapping.sigungu ? String(row[mapping.sigungu] ?? '') : parseSigunguFromAddress(address),
       eubmyeondong: mapping.eubmyeondong ? String(row[mapping.eubmyeondong] ?? '') : parseEubmyeondongFromAddress(address),
       cropType: mapping.cropType ? String(row[mapping.cropType] ?? '') : undefined,
       area: mapping.area ? parseFloat(String(row[mapping.area] ?? '0')) || undefined : undefined,
+      pnu: extractPnu(row, mapping),
       sampledYears: year ? [year] : [],
       isEligible: true,
       isSelected: false,
       fileSource,
+      rawData: row,
     };
   }).filter(p => p.farmerId || p.parcelId || p.address);
+
+  // 순번(1,2,3...) 감지: parcelId가 행번호이면 주소에서 재추출
+  if (parcels.length >= 5 && mapping.parcelIdMode !== 'split') {
+    const sampleSize = Math.min(20, parcels.length);
+    let sequentialCount = 0;
+    for (let i = 0; i < sampleSize; i++) {
+      const num = parseInt(parcels[i].parcelId, 10);
+      if (!isNaN(num) && num === i + 1) sequentialCount++;
+    }
+    if (sequentialCount >= sampleSize * 0.8) {
+      console.warn(
+        `[excelParser] parcelId가 순번(1,2,3...)으로 감지됨 → 주소에서 필지번호 재추출 (${parcels.length}건)`
+      );
+      for (const p of parcels) {
+        const { mainLotNum, subLotNum } = parseLotNumber(p.address);
+        p.parcelId = buildParcelId(mainLotNum, subLotNum);
+        p.mainLotNum = mainLotNum;
+        p.subLotNum = subLotNum;
+      }
+    }
+  }
+
+  return parcels;
 }
 
 // 간단한 주소 파싱 헬퍼
@@ -154,6 +181,27 @@ function parseEubmyeondongFromAddress(address: string): string {
   return match ? match[1] : '';
 }
 
+// PNU 코드 추출: 매핑된 컬럼 → rawData 자동 감지
+const PNU_COLUMN_NAMES = ['직불신청_pnu', 'pnu', 'PNU', '필지고유번호', 'pnu코드'];
+
+function extractPnu(row: Record<string, unknown>, mapping: ColumnMapping): string | undefined {
+  // 1. 명시적 매핑
+  if (mapping.pnu) {
+    const v = String(row[mapping.pnu] ?? '').trim();
+    if (v) return v;
+  }
+  // 2. rawData에서 자동 감지
+  for (const col of PNU_COLUMN_NAMES) {
+    const v = row[col];
+    if (v != null && String(v).trim()) return String(v).trim();
+  }
+  return undefined;
+}
+
 function normalizeId(id: string): string {
-  return id.trim().replace(/^0+/, '') || id.trim();
+  const trimmed = id.trim();
+  if (!trimmed) return '';
+  const stripped = trimmed.replace(/^0+/, '');
+  // 전부 0이면 '0' 반환 (예: "00" → "0", "000" → "0")
+  return stripped || '0';
 }

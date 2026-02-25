@@ -3,9 +3,10 @@ interface GeocodingProgressProps {
   total: number;
   failed: number;
   isRunning: boolean;
+  onCancel?: () => void;
 }
 
-export function GeocodingProgress({ done, total, failed, isRunning }: GeocodingProgressProps) {
+export function GeocodingProgress({ done, total, failed, isRunning, onCancel }: GeocodingProgressProps) {
   // isRunning=false이고 done=0이면 렌더링하지 않음
   if (!isRunning && done === 0) {
     return null;
@@ -68,7 +69,23 @@ export function GeocodingProgress({ done, total, failed, isRunning }: GeocodingP
             <p className="text-xs text-red-500 mt-0.5">변환 실패: {failed.toLocaleString()}건</p>
           )}
         </div>
-        <span className="text-sm font-semibold text-gray-500 flex-shrink-0">{percent}%</span>
+
+        {/* 진행 중일 때 정지 버튼 */}
+        {isRunning && onCancel && (
+          <button
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors flex-shrink-0"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            정지
+          </button>
+        )}
+
+        {!isRunning && (
+          <span className="text-sm font-semibold text-gray-500 flex-shrink-0">{percent}%</span>
+        )}
       </div>
 
       <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">

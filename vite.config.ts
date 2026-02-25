@@ -11,4 +11,18 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      '/api/vworld': {
+        target: 'https://api.vworld.kr',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/vworld/, ''),
+      },
+      '/api/kakao': {
+        target: 'https://dapi.kakao.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/kakao/, ''),
+      },
+    },
+  },
 })

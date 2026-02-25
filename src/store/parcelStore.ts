@@ -35,15 +35,18 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
   updateParcels: (parcels) => set({ allParcels: parcels }),
 
   calculateStatistics: () => {
-    const { allParcels, duplicateResult } = get();
+    const { allParcels } = get();
     const eligible = allParcels.filter((p) => p.isEligible);
     const riSet = new Set(eligible.map((p) => p.ri));
+    // 실제 parcel의 sampledYears에서 기채취 수 계산
+    const sampled2024Count = allParcels.filter((p) => p.sampledYears.includes(2024)).length;
+    const sampled2025Count = allParcels.filter((p) => p.sampledYears.includes(2025)).length;
 
     set({
       statistics: {
         totalParcels: allParcels.length,
-        sampled2024: duplicateResult?.duplicateCount2024 ?? 0,
-        sampled2025: duplicateResult?.duplicateCount2025 ?? 0,
+        sampled2024: sampled2024Count,
+        sampled2025: sampled2025Count,
         eligibleParcels: eligible.length,
         uniqueRis: riSet.size,
         canMeetTarget: eligible.length >= 700,

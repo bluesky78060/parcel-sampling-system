@@ -12,8 +12,9 @@ interface GeocodingState {
 
 interface UseGeocodingReturn {
   state: GeocodingState;
-  startGeocoding: (parcels: Parcel[]) => Promise<Parcel[]>;
+  startGeocoding: (parcels: Parcel[], force?: boolean) => Promise<Parcel[]>;
   cancelGeocoding: () => void;
+  resetState: () => void;
   isAvailable: boolean;
 }
 
@@ -39,7 +40,7 @@ export function useGeocoding(): UseGeocodingReturn {
     };
   }, []);
 
-  const startGeocoding = useCallback(async (parcels: Parcel[]): Promise<Parcel[]> => {
+  const startGeocoding = useCallback(async (parcels: Parcel[], force = false): Promise<Parcel[]> => {
     // 이미 실행 중이면 기존 작업 취소
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -57,6 +58,7 @@ export function useGeocoding(): UseGeocodingReturn {
 
     try {
       const result = await batchGeocode(parcels, {
+        force,
         onProgress: (done: number, total: number, failed: number) => {
           setState((prev) => ({
             ...prev,
@@ -121,10 +123,15 @@ export function useGeocoding(): UseGeocodingReturn {
     }
   }, []);
 
+  const resetState = useCallback(() => {
+    setState(initialState);
+  }, []);
+
   return {
     state,
     startGeocoding,
     cancelGeocoding,
+    resetState,
     isAvailable,
   };
 }

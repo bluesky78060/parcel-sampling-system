@@ -8,8 +8,8 @@ interface PreviewTableProps {
 }
 
 const SYSTEM_FIELD_LABELS: Record<string, string> = {
-  farmerId: '농가번호',
-  farmerName: '농가명',
+  farmerId: '경영체번호',
+  farmerName: '경영체명',
   parcelId: '필지번호',
   address: '주소',
   ri: '리명',

@@ -19,31 +19,47 @@ interface SystemField {
 }
 
 const SYSTEM_FIELDS: SystemField[] = [
-  { key: 'farmerId',      label: '농가번호',  required: true,  keywords: ['농가번호', '농가id', '농가 번호', '농가코드'] },
-  { key: 'farmerName',    label: '농가명',    required: false, keywords: ['농가명', '농가 이름', '농가이름', '성명', '이름'] },
-  { key: 'parcelId',      label: '필지번호',  required: true,  keywords: ['필지번호', '필지 번호', '필지id', '필지코드', '지번'] },
-  { key: 'address',       label: '주소',      required: true,  keywords: ['주소', '소재지', '도로명', '지번주소', '소재'] },
-  { key: 'ri',            label: '리명',      required: false, keywords: ['리명', '리 명', '마을', '법정리', '행정리'] },
-  { key: 'sido',           label: '시도',      required: false, keywords: ['시도', '시/도', '도명', '광역시'] },
-  { key: 'sigungu',       label: '시군구',    required: false, keywords: ['시군구', '시/군/구', '시군', '군구'] },
-  { key: 'eubmyeondong',  label: '읍면동',    required: false, keywords: ['읍면동', '읍/면/동', '읍면', '면동'] },
-  { key: 'area',          label: '면적',      required: false, keywords: ['면적', '넓이', '재배면적', '경작면적', '규모'] },
-  { key: 'cropType',      label: '작물',      required: false, keywords: ['작물', '작목', '품목', '품종', '재배작물'] },
+  { key: 'farmerId',      label: '경영체번호',  required: true,  keywords: ['경영체번호', '경영체 번호', '농가번호', '농가 번호', '농가코드', '관리번호', '농업인번호'] },
+  { key: 'farmerName',    label: '경영체명',    required: false, keywords: ['경영체명', '경영체 이름', '농가명', '농가 이름', '농가이름', '성명', '대표자명', '대표자'] },
+  { key: 'parcelId',      label: '필지번호',  required: true,  keywords: ['필지번호', '필지 번호', '필지코드', '지번', '지번번호', '번지'] },
+  { key: 'farmerAddress',  label: '경영체주소', required: false, keywords: ['경영체주소', '경영체 주소', '농가주소', '농가 주소', '주소지', '경영체소재지', '농가소재지'] },
+  { key: 'address',       label: '필지주소',  required: true,  keywords: ['필지주소', '필지 주소', '필지소재지', '필지 소재지', '지번주소', '지번 주소', '소재지', '소재'] },
+  { key: 'ri',            label: '리/동',     required: false, keywords: ['법정리동', '법정리동명', '리동명', '리동', '법정리', '행정리', '리명', '법정동리', '동리명', '동리'] },
+  { key: 'sido',          label: '시도',      required: false, keywords: ['시도명', '시도', '법정시도', '행정시도', '시·도'] },
+  { key: 'sigungu',       label: '시군구',    required: false, keywords: ['시군구명', '시군구', '법정시군구', '행정시군구', '시군', '시·군·구'] },
+  { key: 'eubmyeondong',  label: '읍면동',    required: false, keywords: ['읍면동명', '읍면동', '법정읍면동', '행정읍면동', '읍면', '읍·면·동'] },
+  { key: 'area',          label: '면적',      required: false, keywords: ['면적', '재배면적', '경작면적', '필지면적', '넓이', '규모'] },
+  { key: 'cropType',      label: '작물',      required: false, keywords: ['작물', '작목', '품목', '품종', '재배작물', '작목명', '작물명', '품목명'] },
+  { key: 'pnu',           label: 'PNU코드',   required: false, keywords: ['직불신청_pnu', 'pnu코드', 'pnu', 'PNU', '필지고유번호'] },
 ];
 
 const SPLIT_FIELDS = [
-  { key: 'mainLotNum' as keyof ColumnMapping, label: '본번', keywords: ['본번', '본지번', '주번', '번지'] },
-  { key: 'subLotNum' as keyof ColumnMapping,  label: '부번', keywords: ['부번', '부지번', '호'] },
+  { key: 'mainLotNum' as keyof ColumnMapping, label: '본번', keywords: ['본번', '본지번', '주번', '본번지'] },
+  { key: 'subLotNum' as keyof ColumnMapping,  label: '부번', keywords: ['부번', '부지번', '부번지'] },
 ];
 
 
-function autoMatch(headers: string[], keywords: string[]): string {
+function autoMatch(headers: string[], keywords: string[], usedHeaders?: Set<string>): string {
   const lower = (s: string) => s.toLowerCase().replace(/\s/g, '');
+
+  // 1차: 정확 매칭 (공백 제거 후 동일)
   for (const header of headers) {
+    if (usedHeaders?.has(header)) continue;
+    const h = lower(header);
     for (const kw of keywords) {
-      if (lower(header).includes(lower(kw))) return header;
+      if (h === lower(kw)) return header;
     }
   }
+
+  // 2차: 부분 매칭 (키워드가 헤더에 포함)
+  for (const header of headers) {
+    if (usedHeaders?.has(header)) continue;
+    const h = lower(header);
+    for (const kw of keywords) {
+      if (h.includes(lower(kw))) return header;
+    }
+  }
+
   return '';
 }
 
@@ -59,21 +75,29 @@ function buildInitialMapping(
     subLotNum: existing.subLotNum || '',
     parcelIdMode: existing.parcelIdMode || 'single',
     address: existing.address || '',
+    farmerAddress: existing.farmerAddress || '',
     ri: existing.ri || '',
     sido: existing.sido || '',
     sigungu: existing.sigungu || '',
     eubmyeondong: existing.eubmyeondong || '',
     area: existing.area || '',
     cropType: existing.cropType || '',
+    pnu: existing.pnu || '',
   };
+
+  // 이미 매핑된 헤더 추적 (중복 매핑 방지)
+  const usedHeaders = new Set<string>();
 
   for (const field of SYSTEM_FIELDS) {
     const current = mapping[field.key];
     if (!current) {
-      const matched = autoMatch(headers, field.keywords);
+      const matched = autoMatch(headers, field.keywords, usedHeaders);
       if (matched) {
         (mapping as unknown as Record<string, string>)[field.key] = matched;
+        usedHeaders.add(matched);
       }
+    } else if (typeof current === 'string' && current) {
+      usedHeaders.add(current);
     }
   }
 
@@ -81,10 +105,13 @@ function buildInitialMapping(
   for (const field of SPLIT_FIELDS) {
     const current = mapping[field.key];
     if (!current) {
-      const matched = autoMatch(headers, field.keywords);
+      const matched = autoMatch(headers, field.keywords, usedHeaders);
       if (matched) {
         (mapping as unknown as Record<string, string>)[field.key] = matched;
+        usedHeaders.add(matched);
       }
+    } else if (typeof current === 'string' && current) {
+      usedHeaders.add(current);
     }
   }
 
@@ -173,15 +200,29 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-lg font-semibold text-gray-800">컬럼 매핑</h2>
-        <p className="mt-1 text-sm text-gray-500">
-          파일 <span className="font-medium text-gray-700">{fileConfig.filename}</span>의
-          컬럼을 시스템 필드에 연결해주세요.
-          <span className="ml-2 text-red-500 font-medium">*</span>
-          <span className="text-gray-400 text-xs ml-0.5">필수 필드</span>
-        </p>
+      {/* Header + 매핑 완료 버튼 */}
+      <div className="flex items-start justify-between">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800">컬럼 매핑</h2>
+          <p className="mt-1 text-sm text-gray-500">
+            파일 <span className="font-medium text-gray-700">{fileConfig.filename}</span>의
+            컬럼을 시스템 필드에 연결해주세요.
+            <span className="ml-2 text-red-500 font-medium">*</span>
+            <span className="text-gray-400 text-xs ml-0.5">필수 필드</span>
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={!isRequiredMapped}
+          onClick={handleComplete}
+          className={`rounded-lg px-5 py-2 text-sm font-semibold transition-colors flex-shrink-0 ${
+            isRequiredMapped
+              ? 'bg-indigo-600 text-white hover:bg-indigo-700 active:bg-indigo-800 shadow-sm'
+              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+          }`}
+        >
+          매핑 완료
+        </button>
       </div>
 
       {/* Mapping grid */}
@@ -442,7 +483,7 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
             </span>
           ) : (
             <span className="text-red-500">
-              필수 필드(농가번호, 주소)를 매핑해주세요. 필지번호는 컬럼 또는 본번·부번을 지정하세요.
+              필수 필드(경영체번호, 주소)를 매핑해주세요. 필지번호는 컬럼 또는 본번·부번을 지정하세요.
             </span>
           )}
         </div>

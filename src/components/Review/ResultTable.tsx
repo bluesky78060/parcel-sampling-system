@@ -85,12 +85,12 @@ export function ResultTable({
       },
       {
         accessorKey: 'farmerId',
-        header: '농가번호',
+        header: '경영체번호',
         size: 90,
       },
       {
         accessorKey: 'farmerName',
-        header: '농가명',
+        header: '경영체명',
         size: 80,
       },
       {
@@ -196,7 +196,7 @@ export function ResultTable({
           type="text"
           value={globalFilter}
           onChange={(e) => setGlobalFilter(e.target.value)}
-          placeholder="농가번호, 농가명, 필지번호, 주소 검색..."
+          placeholder="경영체번호, 경영체명, 필지번호, 주소 검색..."
           className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         />
         <span className="text-sm font-medium text-gray-700 whitespace-nowrap">

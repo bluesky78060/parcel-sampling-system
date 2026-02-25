@@ -6,6 +6,7 @@ import { applyColumnMapping } from '../lib/excelParser';
 import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { useGeocoding } from '../hooks/useGeocoding';
+import { clearGeocodeCache } from '../lib/kakaoGeocoder';
 import { StatsDashboard } from '../components/Analysis/StatsDashboard';
 import { RiDistributionChart } from '../components/Analysis/RiDistributionChart';
 import { GeocodingProgress } from '../components/Analysis/GeocodingProgress';
@@ -31,21 +32,22 @@ export function AnalyzePage() {
   const sampled2024 = files.find((f) => f.year === 2024 && f.role === 'sampled');
   const sampled2025 = files.find((f) => f.year === 2025 && f.role === 'sampled');
 
-  // 파일 없으면 업로드 페이지로
+  // 파일 없으면 업로드 페이지로 (마운트 시 1회만)
   useEffect(() => {
     if (!masterFile) {
       navigate('/upload');
-      return;
     }
-  }, [masterFile, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // 매핑 안 된 파일 있으면 매핑 페이지로
+  // 매핑 안 된 파일 있으면 매핑 페이지로 (마운트 시 1회만)
   useEffect(() => {
     const unmapped = files.filter((f) => f.status === 'pending');
     if (files.length > 0 && unmapped.length > 0) {
       navigate('/mapping');
     }
-  }, [files, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const computeDistantRis = useCallback((parcels: Parcel[]) => {
     const geocodedParcels = parcels.filter((p) => p.coords != null);
@@ -112,6 +114,22 @@ export function AnalyzePage() {
       // 2. 중복 감지 및 적격 마킹
       const markedParcels = markEligibility(masterParcels, parcels2024, parcels2025);
 
+      // 디버그 로깅
+      const eligibleCount = markedParcels.filter(p => p.isEligible).length;
+      const dupCount = markedParcels.filter(p => !p.isEligible).length;
+      console.log('[분석] 마스터 필지:', masterParcels.length);
+      console.log('[분석] 2024 기채취:', parcels2024.length);
+      console.log('[분석] 2025 기채취:', parcels2025.length);
+      console.log('[분석] 중복(제외):', dupCount, '| 추출가능:', eligibleCount);
+      if (masterParcels.length > 0) {
+        const s = masterParcels[0];
+        console.log('[분석] 마스터 샘플: farmerId=', s.farmerId, 'parcelId=', s.parcelId, 'address=', s.address?.slice(0, 30));
+      }
+      if (parcels2024.length > 0) {
+        const s = parcels2024[0];
+        console.log('[분석] 2024 샘플: farmerId=', s.farmerId, 'parcelId=', s.parcelId, 'address=', s.address?.slice(0, 30));
+      }
+
       // 3. parcelStore에 저장
       parcelStore.setAllParcels(markedParcels);
       parcelStore.setSampled2024(parcels2024);
@@ -119,37 +137,82 @@ export function AnalyzePage() {
       parcelStore.calculateStatistics();
 
       setHasAnalyzed(true);
-
-      // 4. Geocoding (API 키가 있으면)
-      if (geocoding.isAvailable) {
-        const eligibleParcels = markedParcels.filter((p) => p.isEligible);
-        const geocodedParcels = await geocoding.startGeocoding(eligibleParcels);
-
-        // geocoded 결과를 마스터에 반영
-        const geocodedMap = new Map<string, Parcel>();
-        for (const gp of geocodedParcels) {
-          const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
-          geocodedMap.set(key, gp);
-        }
-
-        const updatedParcels = markedParcels.map((p) => {
-          const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-          const geocoded = geocodedMap.get(key);
-          return geocoded ? { ...p, coords: geocoded.coords } : p;
-        });
-
-        parcelStore.updateParcels(updatedParcels);
-
-        // 먼 거리 리 감지
-        computeDistantRis(updatedParcels);
-      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '분석 중 오류가 발생했습니다.';
       setAnalysisError(message);
     } finally {
       setIsAnalyzing(false);
     }
-  }, [masterFile, sampled2024, sampled2025, parcelStore, geocoding, computeDistantRis]);
+  }, [masterFile, sampled2024, sampled2025, parcelStore]);
+
+  // 좌표 변환 (사용자 수동 실행)
+  const runGeocoding = useCallback(async () => {
+    if (!geocoding.isAvailable) return;
+    setAnalysisError(null);
+
+    try {
+      const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
+      if (eligibleParcels.length === 0) return;
+
+      const geocodedParcels = await geocoding.startGeocoding(eligibleParcels);
+
+      const geocodedMap = new Map<string, Parcel>();
+      for (const gp of geocodedParcels) {
+        const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
+        geocodedMap.set(key, gp);
+      }
+
+      const updatedParcels = parcelStore.allParcels.map((p) => {
+        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+        const geocoded = geocodedMap.get(key);
+        return geocoded ? { ...p, coords: geocoded.coords } : p;
+      });
+
+      parcelStore.updateParcels(updatedParcels);
+      computeDistantRis(updatedParcels);
+    } catch (err) {
+      const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
+      console.warn('[분석] Geocoding 오류:', geoMessage);
+      setAnalysisError(`좌표 변환 오류: ${geoMessage}\n(분석 결과와 추출 기능은 정상 작동합니다)`);
+    }
+  }, [parcelStore, geocoding, computeDistantRis]);
+
+  // 좌표 재변환 (캐시 초기화 후 강제 재실행)
+  const rerunGeocoding = useCallback(async () => {
+    if (!geocoding.isAvailable) return;
+    setAnalysisError(null);
+
+    try {
+      // 캐시 초기화
+      clearGeocodeCache();
+      geocoding.resetState();
+
+      const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
+      if (eligibleParcels.length === 0) return;
+
+      // force=true로 기존 좌표 무시하고 전체 재변환
+      const geocodedParcels = await geocoding.startGeocoding(eligibleParcels, true);
+
+      const geocodedMap = new Map<string, Parcel>();
+      for (const gp of geocodedParcels) {
+        const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
+        geocodedMap.set(key, gp);
+      }
+
+      const updatedParcels = parcelStore.allParcels.map((p) => {
+        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+        const geocoded = geocodedMap.get(key);
+        return geocoded ? { ...p, coords: geocoded.coords } : p;
+      });
+
+      parcelStore.updateParcels(updatedParcels);
+      computeDistantRis(updatedParcels);
+    } catch (err) {
+      const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
+      console.warn('[분석] Geocoding 재변환 오류:', geoMessage);
+      setAnalysisError(`좌표 재변환 오류: ${geoMessage}`);
+    }
+  }, [parcelStore, geocoding, computeDistantRis]);
 
   // 이미 분석된 상태면 재분석 없이 바로 표시
   useEffect(() => {
@@ -258,27 +321,7 @@ export function AnalyzePage() {
           {/* 통계 대시보드 */}
           <StatsDashboard statistics={statistics} />
 
-          {/* Geocoding 진행률 */}
-          <GeocodingProgress
-            done={geocoding.state.progress.done}
-            total={geocoding.state.progress.total}
-            failed={geocoding.state.progress.failed}
-            isRunning={geocoding.state.isRunning}
-          />
-
-          {/* Geocoding 오류 */}
-          {geocoding.state.error && (
-            <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
-              <div className="flex items-start gap-2">
-                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-                <span>Geocoding 오류: {geocoding.state.error}</span>
-              </div>
-            </div>
-          )}
-
-          {/* 먼 거리 리 경고 */}
+          {/* 먼 거리 리 경고 - 통계 대시보드 바로 아래 */}
           {distantRis.length > 0 && (
             <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
               <div className="flex items-start gap-2 mb-2">
@@ -300,6 +343,66 @@ export function AnalyzePage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* 좌표 변환 (수동 실행) */}
+          {geocoding.isAvailable && !geocoding.state.isRunning && !geocoding.state.isComplete && (
+            <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-blue-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-blue-800">좌표 변환 (선택사항)</p>
+                    <p className="text-xs text-blue-600">PNU 코드 기반으로 필지 좌표를 변환합니다. 지도 표시 및 공간 분석에 활용됩니다.</p>
+                  </div>
+                </div>
+                <button
+                  onClick={runGeocoding}
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors flex-shrink-0 ml-4"
+                >
+                  좌표 변환 시작
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Geocoding 진행률 */}
+          {(geocoding.state.isRunning || geocoding.state.isComplete) && (
+            <div className="space-y-2">
+              <GeocodingProgress
+                done={geocoding.state.progress.done}
+                total={geocoding.state.progress.total}
+                failed={geocoding.state.progress.failed}
+                isRunning={geocoding.state.isRunning}
+                onCancel={geocoding.cancelGeocoding}
+              />
+              {geocoding.state.isComplete && !geocoding.state.isRunning && (
+                <button
+                  onClick={rerunGeocoding}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  캐시 초기화 및 좌표 재변환
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Geocoding 오류 */}
+          {geocoding.state.error && (
+            <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+              <div className="flex items-start gap-2">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <span>Geocoding 오류: {geocoding.state.error}</span>
+              </div>
             </div>
           )}
 

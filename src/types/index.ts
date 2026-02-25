@@ -9,7 +9,8 @@ export interface Parcel {
   parcelId: string;
   mainLotNum: string;         // 본번
   subLotNum: string;          // 부번
-  address: string;
+  address: string;             // 필지 주소
+  farmerAddress: string;       // 경영체(농가) 주소
   sido: string;               // 시도
   ri: string;
   sigungu: string;
@@ -21,6 +22,8 @@ export interface Parcel {
   isSelected: boolean;
   fileSource: string;
   coords?: LatLng | null;
+  pnu?: string;
+  rawData?: Record<string, unknown>;
 }
 
 export interface FileConfig {
@@ -43,13 +46,15 @@ export interface ColumnMapping {
   mainLotNum?: string;        // 본번 (분리형)
   subLotNum?: string;         // 부번 (분리형)
   parcelIdMode?: 'single' | 'split';  // 통합 / 본번+부번 분리
-  address: string;
+  address: string;             // 필지 주소
+  farmerAddress?: string;      // 경영체(농가) 주소
   sido?: string;              // 시도
   ri?: string;
   sigungu?: string;
   eubmyeondong?: string;
   area?: string;
   cropType?: string;
+  pnu?: string;
 }
 
 export interface SpatialConfig {

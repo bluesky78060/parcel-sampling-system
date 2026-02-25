@@ -69,6 +69,7 @@ export function ExtractPage() {
     const dist = getRiDistribution();
     return Object.entries(dist)
       .map(([ri, counts]) => ({ ri, eligibleCount: counts.eligible }))
+      .filter(({ eligibleCount }) => eligibleCount > 0)
       .sort((a, b) => a.ri.localeCompare(b.ri, 'ko'));
   }, [getRiDistribution]);
 

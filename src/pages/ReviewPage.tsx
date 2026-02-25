@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
@@ -18,6 +18,19 @@ export function ReviewPage() {
   const [filterRi, setFilterRi] = useState<string>('');
   const [selectedMarkerParcel, setSelectedMarkerParcel] = useState<Parcel | null>(null);
   const [showDistanceCircle, setShowDistanceCircle] = useState(false);
+  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+  const [isMapFullscreen, setIsMapFullscreen] = useState(false);
+  const [showPolygons, setShowPolygons] = useState(true);
+
+  // ESC키로 전체화면 종료
+  useEffect(() => {
+    if (!isMapFullscreen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setIsMapFullscreen(false);
+    };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [isMapFullscreen]);
 
   // result가 없으면 extract로 리다이렉트
   if (!result) {
@@ -38,6 +51,12 @@ export function ReviewPage() {
     const selectedKeys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
     const unselected = eligible.filter((p) => !selectedKeys.has(`${p.farmerId}__${p.parcelId}`));
     return [...selectedParcels, ...unselected];
+  }, [allParcels, selectedParcels]);
+
+  // 추출 선택만 표시: allParcels에서 좌표 포함된 데이터로 필터링
+  const mapSelectedParcels = useMemo(() => {
+    const keys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
+    return allParcels.filter((p) => keys.has(`${p.farmerId}__${p.parcelId}`));
   }, [allParcels, selectedParcels]);
 
   const riList = useMemo(() => getRiList(), [getRiList]);
@@ -124,67 +143,117 @@ export function ReviewPage() {
           onRemoveParcel={removeParcel}
         />
       ) : (
-        <div className="flex gap-4" style={{ minHeight: '600px' }}>
-          {/* 좌측: 지도 (2/3) */}
-          <div className="flex-1" style={{ flexBasis: '66.67%' }}>
+        <div className={
+          isMapFullscreen
+            ? 'fixed inset-0 z-[9999] bg-white flex flex-col'
+            : 'flex flex-col gap-3'
+        }>
+          {/* 상단: 필터 바 */}
+          <div className={`flex items-center gap-4 bg-white border border-gray-200 px-4 py-2.5 ${isMapFullscreen ? 'border-b shrink-0' : 'rounded-lg'}`}>
+            <label className="text-sm font-medium text-gray-700 flex-shrink-0">리 필터</label>
+            <select
+              value={filterRi}
+              onChange={(e) => setFilterRi(e.target.value)}
+              className="text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-[160px]"
+            >
+              <option value="">전체 리 표시</option>
+              {riList.map((ri) => (
+                <option key={ri} value={ri}>
+                  {ri}
+                </option>
+              ))}
+            </select>
+            <div className="h-5 w-px bg-gray-200" />
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showSelectedOnly}
+                onChange={(e) => setShowSelectedOnly(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm text-gray-600">추출 선택만</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showDistanceCircle}
+                onChange={(e) => setShowDistanceCircle(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm text-gray-600">1km 반경</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showPolygons}
+                onChange={(e) => setShowPolygons(e.target.checked)}
+                className="rounded"
+              />
+              <span className="text-sm text-gray-600">필지 영역</span>
+            </label>
+            <div className="ml-auto flex-shrink-0">
+              <button
+                onClick={() => setIsMapFullscreen(!isMapFullscreen)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+              >
+                {isMapFullscreen ? (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5M15 15l5.25 5.25" />
+                    </svg>
+                    축소 (ESC)
+                  </>
+                ) : (
+                  <>
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" />
+                    </svg>
+                    전체화면
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* 중앙: 지도 */}
+          <div
+            className={`relative ${isMapFullscreen ? 'flex-1' : ''}`}
+            style={isMapFullscreen ? undefined : { height: 'calc(100vh - 340px)', minHeight: '500px' }}
+          >
             <KakaoMap
-              parcels={allParcels}
+              parcels={showSelectedOnly ? mapSelectedParcels : allParcels}
               selectedParcels={selectedParcels}
               onMarkerClick={(parcel) => setSelectedMarkerParcel(parcel)}
               filterRi={filterRi || undefined}
               showDistanceCircle={showDistanceCircle}
+              showPolygons={showPolygons}
               className="h-full"
             />
-          </div>
 
-          {/* 우측: 필터 + 상세 + 범례 (1/3) */}
-          <div className="flex flex-col gap-4" style={{ flexBasis: '33.33%', minWidth: '260px' }}>
-            {/* 리 필터 */}
-            <div className="bg-white rounded-lg border border-gray-200 p-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">리 필터</label>
-              <select
-                value={filterRi}
-                onChange={(e) => setFilterRi(e.target.value)}
-                className="w-full text-sm border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">전체 리 표시</option>
-                {riList.map((ri) => (
-                  <option key={ri} value={ri}>
-                    {ri}
-                  </option>
-                ))}
-              </select>
-              <label className="flex items-center gap-2 mt-3 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showDistanceCircle}
-                  onChange={(e) => setShowDistanceCircle(e.target.checked)}
-                  className="rounded"
-                />
-                <span className="text-sm text-gray-600">클릭 시 1km 반경 표시</span>
-              </label>
-            </div>
-
-            {/* 선택된 마커 상세 */}
-            {selectedMarkerParcel ? (
-              <div className="bg-white rounded-lg border border-gray-200 p-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-sm font-semibold text-gray-700">선택 필지 상세</h4>
+            {/* 마커 클릭 시 상세 패널 (지도 위 오버레이) */}
+            {selectedMarkerParcel && (
+              <div className="absolute top-3 right-3 z-[1000] w-64 bg-white/95 backdrop-blur rounded-lg border border-gray-200 shadow-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="text-xs font-semibold text-gray-700">선택 필지 상세</h4>
                   <button
                     onClick={() => setSelectedMarkerParcel(null)}
-                    className="text-gray-400 hover:text-gray-600 text-xs"
+                    className="text-gray-400 hover:text-gray-600 text-xs leading-none"
                   >
-                    닫기
+                    ✕
                   </button>
                 </div>
-                <div className="space-y-1.5 text-sm">
+                <div className="space-y-1 text-xs">
                   <div className="flex justify-between">
                     <span className="text-gray-500">농업인</span>
                     <span className="font-medium">{selectedMarkerParcel.farmerName}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">필지번호</span>
-                    <span className="font-mono text-xs">{selectedMarkerParcel.parcelId}</span>
+                    <span className="font-mono">{selectedMarkerParcel.parcelId}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">주소</span>
+                    <p className="mt-0.5 break-all">{selectedMarkerParcel.address}</p>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">리</span>
@@ -210,22 +279,24 @@ export function ReviewPage() {
                     <span className="text-gray-500">2026 선택</span>
                     <span
                       className={`font-semibold ${
-                        selectedMarkerParcel.isSelected ? 'text-blue-600' : 'text-gray-400'
+                        selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
+                          ? 'text-blue-600'
+                          : 'text-gray-400'
                       }`}
                     >
-                      {selectedMarkerParcel.isSelected ? '추출 선택' : '미선택'}
+                      {selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
+                        ? '추출 선택'
+                        : '미선택'}
                     </span>
                   </div>
                 </div>
               </div>
-            ) : (
-              <div className="bg-gray-50 rounded-lg border border-dashed border-gray-200 p-4 text-center">
-                <p className="text-gray-400 text-xs">마커를 클릭하면 상세 정보가 표시됩니다</p>
-              </div>
             )}
+          </div>
 
-            {/* 범례 */}
-            <MapLegend counts={mapLegendCounts} />
+          {/* 하단: 범례 (가로 배치) */}
+          <div className={isMapFullscreen ? 'shrink-0' : ''}>
+            <MapLegend counts={mapLegendCounts} horizontal />
           </div>
         </div>
       )}

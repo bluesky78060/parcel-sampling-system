@@ -93,7 +93,7 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
           >
             <option value="random">랜덤 균등</option>
             <option value="area">면적순</option>
-            <option value="farmerId">농가번호순</option>
+            <option value="farmerId">경영체번호순</option>
           </select>
         </div>
 

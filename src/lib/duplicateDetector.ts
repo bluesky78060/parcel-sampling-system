@@ -2,63 +2,80 @@ import type { Parcel, DuplicateResult } from '../types';
 import { normalizeAddress } from './addressParser';
 
 /**
- * 필지의 중복 키 생성 (우선순위: farmerId+parcelId > 정규화주소)
+ * 마스터 필지의 내부 추적 키 (PNU 우선, 필지주소 폴백)
  */
 export function getDuplicateKey(parcel: Parcel): string {
-  if (parcel.farmerId && parcel.parcelId) {
-    return `${parcel.farmerId}_${parcel.parcelId}`;
-  }
-  return normalizeAddress(parcel.address);
+  if (parcel.pnu) return `pnu:${parcel.pnu}`;
+  if (parcel.address) return `addr:${normalizeAddress(parcel.address)}`;
+  return '';
 }
 
 /**
- * 보조 중복 키 생성 (농가번호 + 정규화주소)
+ * 기채취 키셋 구축 (PNU 셋 + 필지주소 셋 분리)
  */
-function getSecondaryKey(parcel: Parcel): string {
-  return `${parcel.farmerId}_${normalizeAddress(parcel.address)}`;
+function buildSampledKeySets(parcels: Parcel[]) {
+  const pnuSet = new Set<string>();
+  const addrSet = new Set<string>();
+  for (const p of parcels) {
+    if (p.pnu) pnuSet.add(p.pnu);
+    if (p.address) addrSet.add(normalizeAddress(p.address));
+  }
+  return { pnuSet, addrSet };
 }
 
 /**
- * 중복 필지 감지
- * - 마스터 파일과 2024/2025 채취 파일을 비교
- * - 3단계 매칭: 1순위(ID조합), 2순위(정규화주소), 3순위(농가+주소)
+ * 마스터 필지가 기채취 셋에 매칭되는지 확인
+ * PNU가 있으면 PNU로, 없으면 필지주소로 비교
+ */
+function isMatched(
+  parcel: Parcel,
+  sampledKeys: { pnuSet: Set<string>; addrSet: Set<string> }
+): boolean {
+  if (parcel.pnu && sampledKeys.pnuSet.has(parcel.pnu)) return true;
+  if (parcel.address) {
+    return sampledKeys.addrSet.has(normalizeAddress(parcel.address));
+  }
+  return false;
+}
+
+/**
+ * 중복 필지 감지 (PNU 우선, farmerId+parcelId 폴백)
+ *
+ * 2026 마스터 - 2024 기채취 - 2025 기채취 = 추출 대상
  */
 export function findDuplicates(
   masterParcels: Parcel[],
   sampled2024: Parcel[],
   sampled2025: Parcel[]
 ): DuplicateResult {
-  // 2024년 키셋 구축
-  const keys2024 = new Set<string>();
-  const secondaryKeys2024 = new Set<string>();
-  for (const p of sampled2024) {
-    keys2024.add(getDuplicateKey(p));
-    secondaryKeys2024.add(getSecondaryKey(p));
-  }
+  const keys2024 = buildSampledKeySets(sampled2024);
+  const keys2025 = buildSampledKeySets(sampled2025);
 
-  // 2025년 키셋 구축
-  const keys2025 = new Set<string>();
-  const secondaryKeys2025 = new Set<string>();
-  for (const p of sampled2025) {
-    keys2025.add(getDuplicateKey(p));
-    secondaryKeys2025.add(getSecondaryKey(p));
-  }
+  console.log(
+    '[중복감지] 마스터:', masterParcels.length,
+    '| 2024 PNU:', keys2024.pnuSet.size, 'ADDR:', keys2024.addrSet.size,
+    '| 2025 PNU:', keys2025.pnuSet.size, 'ADDR:', keys2025.addrSet.size
+  );
 
   const duplicateKeys2024 = new Set<string>();
   const duplicateKeys2025 = new Set<string>();
   let eligibleCount = 0;
 
   for (const parcel of masterParcels) {
-    const primaryKey = getDuplicateKey(parcel);
-    const secondaryKey = getSecondaryKey(parcel);
+    const trackingKey = getDuplicateKey(parcel);
+    const is2024 = isMatched(parcel, keys2024);
+    const is2025 = isMatched(parcel, keys2025);
 
-    const is2024 = keys2024.has(primaryKey) || secondaryKeys2024.has(secondaryKey);
-    const is2025 = keys2025.has(primaryKey) || secondaryKeys2025.has(secondaryKey);
-
-    if (is2024) duplicateKeys2024.add(primaryKey);
-    if (is2025) duplicateKeys2025.add(primaryKey);
+    if (is2024 && trackingKey) duplicateKeys2024.add(trackingKey);
+    if (is2025 && trackingKey) duplicateKeys2025.add(trackingKey);
     if (!is2024 && !is2025) eligibleCount++;
   }
+
+  console.log(
+    '[중복감지] 2024 중복:', duplicateKeys2024.size,
+    '| 2025 중복:', duplicateKeys2025.size,
+    '| 추출가능:', eligibleCount
+  );
 
   return {
     duplicateKeys2024,

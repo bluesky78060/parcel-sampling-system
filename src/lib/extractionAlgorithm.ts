@@ -8,7 +8,7 @@ import type {
   ValidationMessage,
   SpatialConfig,
 } from '../types';
-import { calculateDensity, clusterParcelsInRi, findDistantRis, findDistantPairs } from './spatialUtils';
+import { calculateDensity, clusterParcelsInRi, findDistantRis, findDistantPairs, haversineDistance } from './spatialUtils';
 
 /**
  * 시드 기반 의사 난수 생성기 (Mulberry32)
@@ -67,14 +67,26 @@ function extractWithDensity(
   // 큰 클러스터 우선, 클러스터 내에서 밀집도 높은 필지 우선
   clusters.sort((a, b) => b.length - a.length);
 
+  const maxDistKm = spatialConfig.maxParcelDistanceKm;
   const selected: Parcel[] = [];
+
   for (const cluster of clusters) {
     if (selected.length >= target) break;
+
+    // 이미 선택된 필지가 있으면, 이 클러스터가 거리 내 연결 가능한지 확인
+    if (selected.length > 0) {
+      const isConnected = cluster.some(cp =>
+        cp.coords && selected.some(s =>
+          s.coords && haversineDistance(s.coords, cp.coords!) <= maxDistKm
+        )
+      );
+      if (!isConnected) continue; // 멀리 떨어진 클러스터 건너뜀
+    }
 
     // 밀집도 점수 계산 후 가중 정렬
     const scored = cluster.map(p => ({
       parcel: p,
-      density: calculateDensity(p, withCoords, spatialConfig.maxParcelDistanceKm)
+      density: calculateDensity(p, withCoords, maxDistKm)
     }));
 
     // densityWeight로 가중: 높으면 밀집도 우선, 낮으면 랜덤에 가까움
@@ -86,6 +98,13 @@ function extractWithDensity(
 
     for (const { parcel } of scored) {
       if (selected.length >= target) break;
+      // 하드 거리 필터: 선택된 필지 중 하나라도 maxDistKm 이내여야 함
+      if (selected.length > 0 && parcel.coords) {
+        const isClose = selected.some(s =>
+          s.coords && haversineDistance(s.coords, parcel.coords!) <= maxDistKm
+        );
+        if (!isClose) continue;
+      }
       selected.push(parcel);
     }
   }
@@ -170,8 +189,11 @@ export function extractParcels(
     selected.push(...riSelected);
   }
 
-  // Step 4: 미달 보충
+  // Step 4: 미달 보충 (거리 필터 적용)
   if (selected.length < config.totalTarget && config.underfillPolicy === 'supplement') {
+    const useSpatialFilter = config.spatialConfig?.enableSpatialFilter ?? false;
+    const maxDistKm = config.spatialConfig?.maxParcelDistanceKm ?? Infinity;
+
     const selectedKeySet = new Set(selected.map(p => `${p.farmerId}_${p.parcelId}`));
     const remaining = candidates.filter(p => !selectedKeySet.has(`${p.farmerId}_${p.parcelId}`));
 
@@ -192,10 +214,18 @@ export function extractParcels(
       for (const p of shuffled) {
         if (selected.length >= config.totalTarget) break;
         const currentCount = farmerCounts[p.farmerId] ?? 0;
-        if (currentCount < config.maxPerFarmer) {
-          selected.push(p);
-          farmerCounts[p.farmerId] = currentCount + 1;
+        if (currentCount >= config.maxPerFarmer) continue;
+
+        // 공간 필터 활성화 시 거리 체크
+        if (useSpatialFilter && p.coords && selected.some(s => s.coords)) {
+          const isClose = selected.some(s =>
+            s.coords && haversineDistance(s.coords, p.coords!) <= maxDistKm
+          );
+          if (!isClose) continue;
         }
+
+        selected.push(p);
+        farmerCounts[p.farmerId] = currentCount + 1;
       }
     }
   }
