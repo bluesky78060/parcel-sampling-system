@@ -12,10 +12,11 @@ type TabId = 'table' | 'map';
 
 export function ReviewPage() {
   const navigate = useNavigate();
-  const { allParcels, getRiList } = useParcelStore();
-  const { result, toggleParcelSelection, addParcel, removeParcel } = useExtractionStore();
+  const { allParcels, representativeParcels, getRiList } = useParcelStore();
+  const { result, toggleParcelSelection, addParcel, removeParcel, config: extractionConfig } = useExtractionStore();
   const [activeTab, setActiveTab] = useState<TabId>('table');
   const [filterRi, setFilterRi] = useState<string>('');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | 'public-payment' | 'representative'>('all');
   const [selectedMarkerParcel, setSelectedMarkerParcel] = useState<Parcel | null>(null);
   const [showDistanceCircle, setShowDistanceCircle] = useState(false);
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
@@ -33,12 +34,21 @@ export function ReviewPage() {
   }, [isMapFullscreen]);
 
   // result가 없으면 extract로 리다이렉트
-  if (!result) {
-    navigate('/extract');
-    return null;
-  }
+  useEffect(() => {
+    if (!result) navigate('/extract');
+  }, [result, navigate]);
+
+  if (!result) return null;
 
   const { selectedParcels, validation } = result;
+
+  // allParcels + representativeParcels 합쳐서 지도에 전달 (중복 제거)
+  const allParcelsWithRep = useMemo(() => {
+    if (representativeParcels.length === 0) return allParcels;
+    const existingKeys = new Set(allParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
+    const newReps = representativeParcels.filter((p) => !existingKeys.has(`${p.farmerId}__${p.parcelId}`));
+    return [...allParcels, ...newReps];
+  }, [allParcels, representativeParcels]);
 
   // allParcels 중 선택된 것 + 아직 미선택 후보 모두 표시
   // isEligible이지만 미선택된 것도 포함
@@ -53,23 +63,32 @@ export function ReviewPage() {
     return [...selectedParcels, ...unselected];
   }, [allParcels, selectedParcels]);
 
-  // 추출 선택만 표시: allParcels에서 좌표 포함된 데이터로 필터링
+  // 추출 선택만 표시: 합쳐진 배열에서 좌표 포함된 데이터로 필터링
   const mapSelectedParcels = useMemo(() => {
     const keys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
-    return allParcels.filter((p) => keys.has(`${p.farmerId}__${p.parcelId}`));
-  }, [allParcels, selectedParcels]);
+    return allParcelsWithRep.filter((p) => keys.has(`${p.farmerId}__${p.parcelId}`));
+  }, [allParcelsWithRep, selectedParcels]);
 
   const riList = useMemo(() => getRiList(), [getRiList]);
 
   const mapLegendCounts = useMemo(() => {
     const selectedKeys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
+    const repKeys = new Set(representativeParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
     let selected = 0;
+    let representative = 0;
     let unselected = 0;
     let sampled2024 = 0;
     let sampled2025 = 0;
     let noCoords = 0;
 
+    // 대표필지 수 (좌표 있는 것만)
+    for (const p of representativeParcels) {
+      if (p.coords) representative++;
+      else noCoords++;
+    }
+
     for (const p of allParcels) {
+      if (repKeys.has(`${p.farmerId}__${p.parcelId}`)) continue; // 대표필지는 위에서 처리
       if (!p.coords) {
         noCoords++;
       } else if (selectedKeys.has(`${p.farmerId}__${p.parcelId}`)) {
@@ -83,8 +102,8 @@ export function ReviewPage() {
       }
     }
 
-    return { selected, unselected, sampled2024, sampled2025, noCoords };
-  }, [allParcels, selectedParcels]);
+    return { selected, representative, unselected, sampled2024, sampled2025, noCoords };
+  }, [allParcels, selectedParcels, representativeParcels]);
 
   const tabs: { id: TabId; label: string }[] = [
     { id: 'table', label: '테이블 뷰' },
@@ -119,18 +138,29 @@ export function ReviewPage() {
             </button>
           ))}
         </div>
-        <span className="text-sm text-gray-600 mb-2">
-          선택:{' '}
-          <span className="font-semibold text-blue-600">{selectedParcels.length}</span>
-          <span className="text-gray-400"> / 700</span>
-        </span>
+        <div className="flex items-center gap-3 text-sm text-gray-600 mb-2">
+          <span>
+            선택:{' '}
+            <span className="font-semibold text-blue-600">{selectedParcels.length}</span>
+            <span className="text-gray-400"> / {extractionConfig.totalTarget}</span>
+          </span>
+          <div className="h-4 w-px bg-gray-200" />
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-blue-500" />
+            공익 <span className="font-semibold">{selectedParcels.filter(p => (p.parcelCategory ?? 'public-payment') === 'public-payment').length}</span>
+          </span>
+          <span className="flex items-center gap-1">
+            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+            대표 <span className="font-semibold">{representativeParcels.length}</span>
+          </span>
+        </div>
       </div>
 
       {/* 검증 패널 */}
       <ValidationPanel
         validation={validation}
         selectedCount={selectedParcels.length}
-        targetCount={700}
+        targetCount={extractionConfig.totalTarget}
       />
 
       {/* 탭 콘텐츠 */}
@@ -141,6 +171,7 @@ export function ReviewPage() {
           onToggleSelection={toggleParcelSelection}
           onAddParcel={addParcel}
           onRemoveParcel={removeParcel}
+          targetCount={extractionConfig.totalTarget}
         />
       ) : (
         <div className={
@@ -163,6 +194,31 @@ export function ReviewPage() {
                 </option>
               ))}
             </select>
+            <div className="h-5 w-px bg-gray-200" />
+            <div className="flex items-center gap-1">
+              <span className="text-sm font-medium text-gray-700 mr-1">구분</span>
+              {([
+                { value: 'all', label: '전체', color: 'gray' },
+                { value: 'public-payment', label: '공익직불', color: 'blue' },
+                { value: 'representative', label: '대표필지', color: 'emerald' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setCategoryFilter(opt.value)}
+                  className={`px-2.5 py-1 text-xs font-medium rounded-full transition-colors ${
+                    categoryFilter === opt.value
+                      ? opt.color === 'blue'
+                        ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300'
+                        : opt.color === 'emerald'
+                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-300'
+                        : 'bg-gray-200 text-gray-700 ring-1 ring-gray-300'
+                      : 'bg-gray-50 text-gray-500 hover:bg-gray-100'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
             <div className="h-5 w-px bg-gray-200" />
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
@@ -221,10 +277,11 @@ export function ReviewPage() {
             style={isMapFullscreen ? undefined : { height: 'calc(100vh - 340px)', minHeight: '500px' }}
           >
             <KakaoMap
-              parcels={showSelectedOnly ? mapSelectedParcels : allParcels}
+              parcels={showSelectedOnly ? mapSelectedParcels : allParcelsWithRep}
               selectedParcels={selectedParcels}
               onMarkerClick={(parcel) => setSelectedMarkerParcel(parcel)}
               filterRi={filterRi || undefined}
+              categoryFilter={categoryFilter}
               showDistanceCircle={showDistanceCircle}
               showPolygons={showPolygons}
               className="h-full"
@@ -243,6 +300,14 @@ export function ReviewPage() {
                   </button>
                 </div>
                 <div className="space-y-1 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-gray-500">구분</span>
+                    {(selectedMarkerParcel.parcelCategory ?? 'public-payment') === 'representative' ? (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-700">대표필지</span>
+                    ) : (
+                      <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-100 text-blue-700">공익직불제</span>
+                    )}
+                  </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">농업인</span>
                     <span className="font-medium">{selectedMarkerParcel.farmerName}</span>
@@ -277,17 +342,21 @@ export function ReviewPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">2026 선택</span>
-                    <span
-                      className={`font-semibold ${
-                        selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
-                          ? 'text-blue-600'
-                          : 'text-gray-400'
-                      }`}
-                    >
-                      {selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
-                        ? '추출 선택'
-                        : '미선택'}
-                    </span>
+                    {(selectedMarkerParcel.parcelCategory ?? 'public-payment') === 'representative' ? (
+                      <span className="font-semibold text-emerald-600">고정 선택</span>
+                    ) : (
+                      <span
+                        className={`font-semibold ${
+                          selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
+                            ? 'text-blue-600'
+                            : 'text-gray-400'
+                        }`}
+                      >
+                        {selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
+                          ? '추출 선택'
+                          : '미선택'}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>

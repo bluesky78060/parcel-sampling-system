@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFileStore } from '../store/fileStore';
 import { useParcelStore } from '../store/parcelStore';
+import { useExtractionStore } from '../store/extractionStore';
 import { applyColumnMapping } from '../lib/excelParser';
 import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
@@ -22,6 +23,7 @@ export function AnalyzePage() {
   const { files } = useFileStore();
   const parcelStore = useParcelStore();
   const geocoding = useGeocoding();
+  const { config: extractionConfig } = useExtractionStore();
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -31,6 +33,7 @@ export function AnalyzePage() {
   const masterFile = files.find((f) => f.role === 'master');
   const sampled2024 = files.find((f) => f.year === 2024 && f.role === 'sampled');
   const sampled2025 = files.find((f) => f.year === 2025 && f.role === 'sampled');
+  const representativeFile = files.find((f) => f.role === 'representative');
 
   // 파일 없으면 업로드 페이지로 (마운트 시 1회만)
   useEffect(() => {
@@ -114,27 +117,28 @@ export function AnalyzePage() {
       // 2. 중복 감지 및 적격 마킹
       const markedParcels = markEligibility(masterParcels, parcels2024, parcels2025);
 
-      // 디버그 로깅
-      const eligibleCount = markedParcels.filter(p => p.isEligible).length;
-      const dupCount = markedParcels.filter(p => !p.isEligible).length;
-      console.log('[분석] 마스터 필지:', masterParcels.length);
-      console.log('[분석] 2024 기채취:', parcels2024.length);
-      console.log('[분석] 2025 기채취:', parcels2025.length);
-      console.log('[분석] 중복(제외):', dupCount, '| 추출가능:', eligibleCount);
-      if (masterParcels.length > 0) {
-        const s = masterParcels[0];
-        console.log('[분석] 마스터 샘플: farmerId=', s.farmerId, 'parcelId=', s.parcelId, 'address=', s.address?.slice(0, 30));
-      }
-      if (parcels2024.length > 0) {
-        const s = parcels2024[0];
-        console.log('[분석] 2024 샘플: farmerId=', s.farmerId, 'parcelId=', s.parcelId, 'address=', s.address?.slice(0, 30));
-      }
+      // 3. 대표필지 파싱 (있을 경우)
+      const repParcels = representativeFile?.rawData
+        ? applyColumnMapping(
+            representativeFile.rawData,
+            representativeFile.columnMapping,
+            representativeFile.filename,
+            undefined,
+            'representative'
+          ).map(p => ({
+            ...p,
+            isEligible: true,
+            isSelected: true,
+            sampledYears: [] as number[],
+          }))
+        : [];
 
-      // 3. parcelStore에 저장
+      // 4. parcelStore에 저장
       parcelStore.setAllParcels(markedParcels);
       parcelStore.setSampled2024(parcels2024);
       parcelStore.setSampled2025(parcels2025);
-      parcelStore.calculateStatistics();
+      parcelStore.setRepresentativeParcels(repParcels);
+      parcelStore.calculateStatistics(extractionConfig.totalTarget);
 
       setHasAnalyzed(true);
     } catch (err) {
@@ -143,7 +147,7 @@ export function AnalyzePage() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [masterFile, sampled2024, sampled2025, parcelStore]);
+  }, [masterFile, sampled2024, sampled2025, representativeFile, parcelStore, extractionConfig.totalTarget]);
 
   // 좌표 변환 (사용자 수동 실행)
   const runGeocoding = useCallback(async () => {
@@ -151,10 +155,13 @@ export function AnalyzePage() {
     setAnalysisError(null);
 
     try {
+      // 공익직불제 eligible + 대표필지 모두 Geocoding 대상
       const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
-      if (eligibleParcels.length === 0) return;
+      const repParcels = parcelStore.representativeParcels;
+      const allForGeocoding = [...eligibleParcels, ...repParcels];
+      if (allForGeocoding.length === 0) return;
 
-      const geocodedParcels = await geocoding.startGeocoding(eligibleParcels);
+      const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
 
       const geocodedMap = new Map<string, Parcel>();
       for (const gp of geocodedParcels) {
@@ -162,13 +169,24 @@ export function AnalyzePage() {
         geocodedMap.set(key, gp);
       }
 
+      // 공익직불제 필지 좌표 업데이트
       const updatedParcels = parcelStore.allParcels.map((p) => {
         const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
         const geocoded = geocodedMap.get(key);
         return geocoded ? { ...p, coords: geocoded.coords } : p;
       });
-
       parcelStore.updateParcels(updatedParcels);
+
+      // 대표필지 좌표 업데이트
+      if (repParcels.length > 0) {
+        const updatedRep = repParcels.map((p) => {
+          const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+          const geocoded = geocodedMap.get(key);
+          return geocoded ? { ...p, coords: geocoded.coords } : p;
+        });
+        parcelStore.setRepresentativeParcels(updatedRep);
+      }
+
       computeDistantRis(updatedParcels);
     } catch (err) {
       const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
@@ -183,15 +201,15 @@ export function AnalyzePage() {
     setAnalysisError(null);
 
     try {
-      // 캐시 초기화
       clearGeocodeCache();
       geocoding.resetState();
 
       const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
-      if (eligibleParcels.length === 0) return;
+      const repParcels = parcelStore.representativeParcels;
+      const allForGeocoding = [...eligibleParcels, ...repParcels];
+      if (allForGeocoding.length === 0) return;
 
-      // force=true로 기존 좌표 무시하고 전체 재변환
-      const geocodedParcels = await geocoding.startGeocoding(eligibleParcels, true);
+      const geocodedParcels = await geocoding.startGeocoding(allForGeocoding, true);
 
       const geocodedMap = new Map<string, Parcel>();
       for (const gp of geocodedParcels) {
@@ -204,8 +222,17 @@ export function AnalyzePage() {
         const geocoded = geocodedMap.get(key);
         return geocoded ? { ...p, coords: geocoded.coords } : p;
       });
-
       parcelStore.updateParcels(updatedParcels);
+
+      if (repParcels.length > 0) {
+        const updatedRep = repParcels.map((p) => {
+          const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+          const geocoded = geocodedMap.get(key);
+          return geocoded ? { ...p, coords: geocoded.coords } : p;
+        });
+        parcelStore.setRepresentativeParcels(updatedRep);
+      }
+
       computeDistantRis(updatedParcels);
     } catch (err) {
       const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
@@ -319,7 +346,7 @@ export function AnalyzePage() {
       {hasAnalyzed && statistics && (
         <>
           {/* 통계 대시보드 */}
-          <StatsDashboard statistics={statistics} />
+          <StatsDashboard statistics={statistics} totalTarget={extractionConfig.totalTarget} />
 
           {/* 먼 거리 리 경고 - 통계 대시보드 바로 아래 */}
           {distantRis.length > 0 && (

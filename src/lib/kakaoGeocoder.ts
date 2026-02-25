@@ -5,6 +5,26 @@ import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
 
+const MAX_CACHE_SIZE = 10000;
+
+/** 캐시에 항목 추가 (크기 초과 시 가장 오래된 항목 제거) */
+function cacheSet(key: string, value: LatLng): void {
+  if (geocodeCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = geocodeCache.keys().next().value;
+    if (firstKey !== undefined) geocodeCache.delete(firstKey);
+  }
+  geocodeCache.set(key, value);
+}
+
+/** pnuFailCache에 항목 추가 (크기 초과 시 가장 오래된 항목 제거) */
+function pnuFailCacheAdd(pnu: string): void {
+  if (pnuFailCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = pnuFailCache.keys().next().value;
+    if (firstKey !== undefined) pnuFailCache.delete(firstKey);
+  }
+  pnuFailCache.add(pnu);
+}
+
 export class RateLimitError extends Error {
   constructor(provider: string) {
     super(`Rate limited by ${provider}`);
@@ -13,17 +33,19 @@ export class RateLimitError extends Error {
 }
 
 // 개발 환경에서는 Vite 프록시를 통해 CORS 우회
+// 프로덕션에서는 직접 호출 (VWORLD: CORS 허용, Kakao REST: 서버 전용이므로 프로덕션에서 사용 불가)
 const isDev = import.meta.env.DEV;
 
-// Kakao API
+// Kakao API — 프로덕션에서는 CORS 차단되므로 프록시 경로만 유효
+// 프로덕션 배포 시 Kakao REST API가 필요하면 서버 프록시를 별도 구성하세요.
 const KAKAO_ADDRESS_URL = isDev
   ? '/api/kakao/v2/local/search/address.json'
-  : 'https://dapi.kakao.com/v2/local/search/address.json';
+  : '/api/kakao/v2/local/search/address.json';
 const KAKAO_KEYWORD_URL = isDev
   ? '/api/kakao/v2/local/search/keyword.json'
-  : 'https://dapi.kakao.com/v2/local/search/keyword.json';
+  : '/api/kakao/v2/local/search/keyword.json';
 
-// VWORLD API (국토교통부)
+// VWORLD API (국토교통부) — CORS 허용되므로 프로덕션에서도 직접 호출 가능
 const VWORLD_GEOCODE_URL = isDev
   ? '/api/vworld/req/address'
   : 'https://api.vworld.kr/req/address';
@@ -205,14 +227,14 @@ export async function geocodePnu(pnu: string): Promise<LatLng | null> {
   for (const result of results) {
     if (result && isValidBonghwaCoord(result)) {
       pnuSuccesses++;
-      geocodeCache.set(cacheKey, result);
+      cacheSet(cacheKey, result);
       setToIDB(cacheKey, result);
       return result;
     }
   }
 
   // 두 레이어 모두 실패 → 실패 캐싱
-  pnuFailCache.add(pnu);
+  pnuFailCacheAdd(pnu);
   if (pnuElapsed > 500) {
     console.info(`  △ PNU 양쪽 레이어 실패 (${pnuElapsed}ms): ${pnu}`);
   }
@@ -249,7 +271,7 @@ export async function geocodeParcel(address: string, pnu?: string): Promise<LatL
       if (snapped) {
         // 스냅된 좌표를 캐시에 덮어쓰기
         const cacheKey = normalizeAddress(address);
-        geocodeCache.set(cacheKey, snapped);
+        cacheSet(cacheKey, snapped);
         setToIDB(cacheKey, snapped);
         return snapped;
       }
@@ -318,7 +340,7 @@ async function snapToPolygonCentroid(
           const centroid = computePolygonCentroid(coords);
           if (isValidBonghwaCoord(centroid)) {
             // 스냅 결과 캐시
-            geocodeCache.set(snapCacheKey, centroid);
+            cacheSet(snapCacheKey, centroid);
             return centroid;
           }
         }
@@ -346,7 +368,7 @@ export async function geocodeAddress(address: string): Promise<LatLng | null> {
   if (vworldKey) {
     const result = await geocodeVworld(address, vworldKey);
     if (result && isValidBonghwaCoord(result)) {
-      geocodeCache.set(cacheKey, result);
+      cacheSet(cacheKey, result);
       setToIDB(cacheKey, result); // fire-and-forget
       return result;
     }
@@ -357,7 +379,7 @@ export async function geocodeAddress(address: string): Promise<LatLng | null> {
   if (kakaoKey) {
     const result = await geocodeKakao(address, kakaoKey);
     if (result && isValidBonghwaCoord(result)) {
-      geocodeCache.set(cacheKey, result);
+      cacheSet(cacheKey, result);
       setToIDB(cacheKey, result); // fire-and-forget
       return result;
     }
@@ -665,7 +687,7 @@ export async function prefetchRegionalPolygons(
               if (ring?.length > 0) {
                 const centroid = computePolygonCentroid(ring);
                 if (isValidBonghwaCoord(centroid)) {
-                  geocodeCache.set(`snap:${pnu}`, centroid);
+                  cacheSet(`snap:${pnu}`, centroid);
                   setToIDB(`snap:${pnu}`, centroid);
                   neededPnus.delete(pnu);
                   snappedCount++;

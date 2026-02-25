@@ -4,6 +4,7 @@ import type { Parcel, RiStat, FarmerStat } from '../types';
 
 interface ExportData {
   selectedParcels: Parcel[];
+  representativeParcels: Parcel[];
   excludedParcels: Parcel[];
   allParcels: Parcel[];
   riStats: RiStat[];
@@ -16,31 +17,44 @@ interface ExportData {
 export function exportToExcel(data: ExportData): void {
   const wb = XLSX.utils.book_new();
 
-  // 시트 1: 2026 필지선정 (2024 공익직불제 포맷)
-  const selectedSheet = createSelectedSheet(data.selectedParcels);
+  // 시트 1: 공익직불제 필지선정 (대표필지 제외)
+  const publicPaymentParcels = data.selectedParcels.filter(
+    (p) => (p.parcelCategory ?? 'public-payment') !== 'representative'
+  );
+  const selectedSheet = createSelectedSheet(publicPaymentParcels);
   XLSX.utils.book_append_sheet(wb, selectedSheet, '2026_필지선정');
 
-  // 시트 2: 리별 통계
+  // 시트 2: 대표필지 (별도 시트, 동일 19컬럼 포맷)
+  const repParcels = data.selectedParcels.filter(
+    (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
+  );
+  if (repParcels.length > 0) {
+    const repSheet = createSelectedSheet(repParcels);
+    XLSX.utils.book_append_sheet(wb, repSheet, '대표필지');
+  }
+
+  // 시트 3: 리별 통계
   const riSheet = createRiStatsSheet(data.riStats);
   XLSX.utils.book_append_sheet(wb, riSheet, '리별_통계');
 
-  // 시트 3: 농가별 통계
+  // 시트 4: 농가별 통계
   const farmerSheet = createFarmerStatsSheet(data.farmerStats);
   XLSX.utils.book_append_sheet(wb, farmerSheet, '농가별_통계');
 
-  // 시트 4: 제외 필지
+  // 시트 5: 제외 필지
   const excludedSheet = createExcludedSheet(data.excludedParcels);
   XLSX.utils.book_append_sheet(wb, excludedSheet, '제외필지');
 
-  // 시트 5: 전체 필지
-  const allSheet = createAllParcelsSheet(data.allParcels);
+  // 시트 6: 전체 필지 (구분 컬럼 포함)
+  const allWithRep = [...data.allParcels, ...data.representativeParcels];
+  const allSheet = createAllParcelsSheet(allWithRep);
   XLSX.utils.book_append_sheet(wb, allSheet, '전체필지');
 
   // 다운로드
   const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
   const blob = new Blob([wbout], { type: 'application/octet-stream' });
   const now = new Date().toISOString().slice(0, 10);
-  saveAs(blob, `2026공익직불제(필지선정)_${now}.xlsx`);
+  saveAs(blob, `2026필지선정(공익직불제+대표필지)_${now}.xlsx`);
 }
 
 // rawData에서 원본 컬럼값을 찾는 헬퍼 (여러 후보 컬럼명 지원)
@@ -147,6 +161,7 @@ function createExcludedSheet(parcels: Parcel[]): XLSX.WorkSheet {
 
 function createAllParcelsSheet(parcels: Parcel[]): XLSX.WorkSheet {
   const rows = parcels.map(p => ({
+    '구분': (p.parcelCategory ?? 'public-payment') === 'representative' ? '대표필지' : '공익직불제',
     '경영체번호': p.farmerId,
     '경영체명': p.farmerName,
     '시도': p.sido,

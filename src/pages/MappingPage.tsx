@@ -42,6 +42,7 @@ export function MappingPage() {
 
   function getRoleLabel(file: FileConfig) {
     if (file.role === 'master') return '마스터';
+    if (file.role === 'representative') return '대표필지';
     return `표본(${file.year})`;
   }
 

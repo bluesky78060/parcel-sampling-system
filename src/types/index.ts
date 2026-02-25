@@ -3,6 +3,8 @@ export interface LatLng {
   lng: number;
 }
 
+export type ParcelCategory = 'public-payment' | 'representative';
+
 export interface Parcel {
   farmerId: string;
   farmerName: string;
@@ -24,13 +26,14 @@ export interface Parcel {
   coords?: LatLng | null;
   pnu?: string;
   rawData?: Record<string, unknown>;
+  parcelCategory: ParcelCategory;
 }
 
 export interface FileConfig {
   id: string;
   filename: string;
   year: 2024 | 2025 | 2026;
-  role: 'sampled' | 'master';
+  role: 'sampled' | 'master' | 'representative';
   columnMapping: ColumnMapping;
   sheetName?: string;
   rowCount: number;
@@ -126,6 +129,7 @@ export interface Statistics {
   eligibleParcels: number;
   uniqueRis: number;
   canMeetTarget: boolean;
+  representativeParcels: number;
 }
 
 export type StepId = 'upload' | 'mapping' | 'analyze' | 'extract' | 'review' | 'export';

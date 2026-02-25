@@ -1,6 +1,7 @@
 interface MapLegendProps {
   counts: {
     selected: number;
+    representative: number;
     unselected: number;
     sampled2024: number;
     sampled2025: number;
@@ -14,13 +15,20 @@ interface LegendItem {
   label: string;
   count: number;
   borderColor?: string;
+  isStar?: boolean;
 }
 
 export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
   const items: LegendItem[] = [
     {
+      color: '#059669',
+      label: '대표필지 (고정)',
+      count: counts.representative,
+      isStar: true,
+    },
+    {
       color: '#2563eb',
-      label: '2026 추출 선택',
+      label: '공익직불제 추출 선택',
       count: counts.selected,
     },
     {
@@ -54,13 +62,19 @@ export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
           <div className="h-4 w-px bg-gray-200" />
           {items.map((item) => (
             <div key={item.label} className="flex items-center gap-1.5">
-              <span
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                style={{
-                  backgroundColor: item.color,
-                  border: item.borderColor ? `2px solid ${item.borderColor}` : undefined,
-                }}
-              />
+              {item.isStar ? (
+                <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 12 12" fill={item.color}>
+                  <polygon points="6,0 7.5,4.2 12,4.5 8.5,7.5 9.5,12 6,9.5 2.5,12 3.5,7.5 0,4.5 4.5,4.2" />
+                </svg>
+              ) : (
+                <span
+                  className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                  style={{
+                    backgroundColor: item.color,
+                    border: item.borderColor ? `2px solid ${item.borderColor}` : undefined,
+                  }}
+                />
+              )}
               <span className="text-xs text-gray-600">{item.label}</span>
               <span className="text-xs font-semibold text-gray-800 tabular-nums">
                 {item.count.toLocaleString()}
@@ -79,13 +93,19 @@ export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
         {items.map((item) => (
           <li key={item.label} className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span
-                className="w-3 h-3 rounded-full flex-shrink-0"
-                style={{
-                  backgroundColor: item.color,
-                  border: item.borderColor ? `2px solid ${item.borderColor}` : undefined,
-                }}
-              />
+              {item.isStar ? (
+                <svg className="w-3 h-3 flex-shrink-0" viewBox="0 0 12 12" fill={item.color}>
+                  <polygon points="6,0 7.5,4.2 12,4.5 8.5,7.5 9.5,12 6,9.5 2.5,12 3.5,7.5 0,4.5 4.5,4.2" />
+                </svg>
+              ) : (
+                <span
+                  className="w-3 h-3 rounded-full flex-shrink-0"
+                  style={{
+                    backgroundColor: item.color,
+                    border: item.borderColor ? `2px solid ${item.borderColor}` : undefined,
+                  }}
+                />
+              )}
               <span className="text-xs text-gray-600">{item.label}</span>
             </div>
             <span className="text-xs font-semibold text-gray-800 tabular-nums">

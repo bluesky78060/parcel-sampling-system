@@ -1,19 +1,22 @@
 import { create } from 'zustand';
 import type { Parcel, Statistics, DuplicateResult } from '../types';
+import { clearGeocodeCache } from '../lib/kakaoGeocoder';
 
 interface ParcelStore {
   allParcels: Parcel[];
   sampled2024: Parcel[];
   sampled2025: Parcel[];
+  representativeParcels: Parcel[];
   duplicateResult: DuplicateResult | null;
   statistics: Statistics | null;
 
   setAllParcels: (parcels: Parcel[]) => void;
   setSampled2024: (parcels: Parcel[]) => void;
   setSampled2025: (parcels: Parcel[]) => void;
+  setRepresentativeParcels: (parcels: Parcel[]) => void;
   setDuplicateResult: (result: DuplicateResult) => void;
   updateParcels: (parcels: Parcel[]) => void;
-  calculateStatistics: () => void;
+  calculateStatistics: (totalTarget?: number) => void;
   getEligibleParcels: () => Parcel[];
   getRiList: () => string[];
   getRiDistribution: () => Record<string, { total: number; eligible: number }>;
@@ -24,21 +27,22 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
   allParcels: [],
   sampled2024: [],
   sampled2025: [],
+  representativeParcels: [],
   duplicateResult: null,
   statistics: null,
 
   setAllParcels: (parcels) => set({ allParcels: parcels }),
   setSampled2024: (parcels) => set({ sampled2024: parcels }),
   setSampled2025: (parcels) => set({ sampled2025: parcels }),
+  setRepresentativeParcels: (parcels) => set({ representativeParcels: parcels }),
   setDuplicateResult: (result) => set({ duplicateResult: result }),
 
   updateParcels: (parcels) => set({ allParcels: parcels }),
 
-  calculateStatistics: () => {
-    const { allParcels } = get();
+  calculateStatistics: (totalTarget = 700) => {
+    const { allParcels, representativeParcels } = get();
     const eligible = allParcels.filter((p) => p.isEligible);
     const riSet = new Set(eligible.map((p) => p.ri));
-    // 실제 parcel의 sampledYears에서 기채취 수 계산
     const sampled2024Count = allParcels.filter((p) => p.sampledYears.includes(2024)).length;
     const sampled2025Count = allParcels.filter((p) => p.sampledYears.includes(2025)).length;
 
@@ -49,7 +53,8 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
         sampled2025: sampled2025Count,
         eligibleParcels: eligible.length,
         uniqueRis: riSet.size,
-        canMeetTarget: eligible.length >= 700,
+        canMeetTarget: eligible.length + representativeParcels.length >= totalTarget,
+        representativeParcels: representativeParcels.length,
       },
     });
   },
@@ -72,12 +77,15 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
     return dist;
   },
 
-  reset: () =>
+  reset: () => {
+    clearGeocodeCache();
     set({
       allParcels: [],
       sampled2024: [],
       sampled2025: [],
+      representativeParcels: [],
       duplicateResult: null,
       statistics: null,
-    }),
+    });
+  },
 }));

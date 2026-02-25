@@ -11,7 +11,7 @@ interface FileUploaderProps {
   label: string;
   required: boolean;
   defaultYear: 2024 | 2025 | 2026;
-  defaultRole: 'sampled' | 'master';
+  defaultRole: 'sampled' | 'master' | 'representative';
 }
 
 export function FileUploader({ slotId, label, required, defaultYear, defaultRole }: FileUploaderProps) {
@@ -92,7 +92,13 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
     e.preventDefault();
     setIsDragOver(false);
     const file = e.dataTransfer.files[0];
-    if (file) await processFile(file);
+    if (!file) return;
+    const ext = file.name.toLowerCase().split('.').pop();
+    if (!['xlsx', 'xls', 'csv'].includes(ext ?? '')) {
+      setError('지원하지 않는 파일 형식입니다. .xlsx, .xls, .csv 파일만 업로드 가능합니다.');
+      return;
+    }
+    await processFile(file);
   };
 
   const handleFileChange = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -133,7 +139,7 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
         onClick={() => inputRef.current?.click()}
         className={`
           relative flex flex-col items-center justify-center rounded-lg border-2 border-dashed
-          px-4 py-8 cursor-pointer transition-colors
+          px-4 py-4 cursor-pointer transition-colors
           ${isDragOver
             ? 'border-indigo-400 bg-indigo-50'
             : 'border-gray-300 bg-gray-50 hover:border-gray-400 hover:bg-gray-100'
@@ -158,7 +164,7 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
           </div>
         ) : (
           <>
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
             <p className="text-sm text-gray-600 text-center">

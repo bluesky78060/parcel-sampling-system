@@ -14,6 +14,7 @@ import { RiTargetTable } from '../components/Extraction/RiTargetTable';
 export function ExtractPage() {
   const navigate = useNavigate();
   const allParcels = useParcelStore((s) => s.allParcels);
+  const representativeParcels = useParcelStore((s) => s.representativeParcels);
   const getRiDistribution = useParcelStore((s) => s.getRiDistribution);
 
   const config = useExtractionStore((s) => s.config);
@@ -75,8 +76,11 @@ export function ExtractPage() {
 
   const spatialConfig = config.spatialConfig!;
 
+  const repCount = representativeParcels.length;
+  const effectiveTarget = Math.max(0, config.totalTarget - repCount);
+
   const handleRunExtraction = () => {
-    runExtraction(allParcels);
+    runExtraction(allParcels, representativeParcels);
   };
 
   const canProceed = result !== null && !isRunning;
@@ -111,6 +115,30 @@ export function ExtractPage() {
         onRemoveOverride={removeRiTargetOverride}
         onToggleExclude={toggleExcludedRi}
       />
+
+      {/* 대표필지 정보 (있을 때만 표시) */}
+      {repCount > 0 && (
+        <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="w-3 h-3 rounded-full bg-emerald-500 flex-shrink-0" />
+            <h3 className="text-sm font-semibold text-emerald-800">대표필지 포함</h3>
+          </div>
+          <div className="grid grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="text-emerald-600">대표필지</span>
+              <p className="font-semibold text-emerald-900">{repCount}개 (고정)</p>
+            </div>
+            <div>
+              <span className="text-emerald-600">공익직불제 추출 목표</span>
+              <p className="font-semibold text-emerald-900">{effectiveTarget}개 (= {config.totalTarget} - {repCount})</p>
+            </div>
+            <div>
+              <span className="text-emerald-600">총 목표</span>
+              <p className="font-semibold text-emerald-900">{config.totalTarget}개</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 추출 실행 */}
       <div className="bg-white rounded-lg border border-gray-200 p-6">

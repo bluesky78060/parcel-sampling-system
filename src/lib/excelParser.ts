@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import type { Parcel, ColumnMapping } from '../types';
+import type { Parcel, ColumnMapping, ParcelCategory } from '../types';
 import { parseLotNumber, buildParcelId, parseSido } from './addressParser';
 
 /**
@@ -74,10 +74,40 @@ export function applyColumnMapping(
   rows: Record<string, unknown>[],
   mapping: ColumnMapping,
   fileSource: string,
-  year?: number
+  year?: number,
+  category: ParcelCategory = 'public-payment'
 ): Parcel[] {
   const parcels = rows.map(row => {
-    const address = String(row[mapping.address] ?? '');
+    let address = mapping.address ? String(row[mapping.address] ?? '').trim() : '';
+
+    // 필지주소가 비어있으면 분리된 주소 컬럼에서 조립
+    if (!address) {
+      const parts: string[] = [];
+      if (mapping.sido) {
+        const v = String(row[mapping.sido] ?? '').trim();
+        if (v) parts.push(v);
+      }
+      if (mapping.sigungu) {
+        const v = String(row[mapping.sigungu] ?? '').trim();
+        if (v) parts.push(v);
+      }
+      if (mapping.eubmyeondong) {
+        const v = String(row[mapping.eubmyeondong] ?? '').trim();
+        if (v) parts.push(v);
+      }
+      if (mapping.ri) {
+        const v = String(row[mapping.ri] ?? '').trim();
+        if (v) parts.push(v);
+      }
+      // 본번/부번 추가
+      const mainNum = mapping.mainLotNum ? String(row[mapping.mainLotNum] ?? '').trim() : '';
+      const subNum = mapping.subLotNum ? String(row[mapping.subLotNum] ?? '').trim() : '';
+      if (mainNum) {
+        const lotStr = subNum && subNum !== '0' ? `${mainNum}-${subNum}` : mainNum;
+        parts.push(lotStr);
+      }
+      address = parts.join(' ');
+    }
     const farmerAddress = mapping.farmerAddress ? String(row[mapping.farmerAddress] ?? '') : '';
     const ri = mapping.ri ? String(row[mapping.ri] ?? '') : parseRiFromAddress(address);
 
@@ -136,6 +166,7 @@ export function applyColumnMapping(
       isSelected: false,
       fileSource,
       rawData: row,
+      parcelCategory: category,
     };
   }).filter(p => p.farmerId || p.parcelId || p.address);
 

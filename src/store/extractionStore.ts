@@ -24,6 +24,7 @@ interface ExtractionStore {
   config: ExtractionConfig;
   result: ExtractionResult | null;
   isRunning: boolean;
+  error: string | null;
 
   updateConfig: (updates: Partial<ExtractionConfig>) => void;
   updateSpatialConfig: (updates: Partial<SpatialConfig>) => void;
@@ -31,7 +32,7 @@ interface ExtractionStore {
   removeRiTargetOverride: (ri: string) => void;
   toggleExcludedRi: (ri: string) => void;
 
-  runExtraction: (allParcels: Parcel[]) => void;
+  runExtraction: (allParcels: Parcel[], representativeParcels?: Parcel[]) => void;
   toggleParcelSelection: (farmerId: string, parcelId: string) => void;
   addParcel: (parcel: Parcel) => void;
   removeParcel: (farmerId: string, parcelId: string) => void;
@@ -44,6 +45,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
   config: { ...DEFAULT_CONFIG },
   result: null,
   isRunning: false,
+  error: null,
 
   updateConfig: (updates) =>
     set((state) => ({ config: { ...state.config, ...updates } })),
@@ -79,13 +81,34 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       return { config: { ...state.config, excludedRis: excluded } };
     }),
 
-  runExtraction: (allParcels) => {
-    set({ isRunning: true });
+  runExtraction: (allParcels, representativeParcels = []) => {
+    set({ isRunning: true, error: null });
     try {
-      const result = extractParcels(allParcels, get().config);
-      set({ result, isRunning: false });
-    } catch {
-      set({ isRunning: false });
+      const config = get().config;
+      const repCount = representativeParcels.length;
+      const effectiveTarget = Math.max(0, config.totalTarget - repCount);
+
+      // 공익직불제 필지만 추출 알고리즘에 전달
+      const effectiveConfig = { ...config, totalTarget: effectiveTarget };
+      const result = effectiveTarget > 0
+        ? extractParcels(allParcels, effectiveConfig)
+        : { selectedParcels: [], riStats: [], farmerStats: [], validation: { isValid: true, warnings: [], errors: [] } };
+
+      // 대표필지를 앞에 병합
+      const finalSelected = [
+        ...representativeParcels.map(p => ({ ...p, isSelected: true })),
+        ...result.selectedParcels,
+      ];
+
+      set({
+        result: { ...result, selectedParcels: finalSelected },
+        isRunning: false,
+      });
+    } catch (err) {
+      set({
+        isRunning: false,
+        error: err instanceof Error ? err.message : '추출 중 오류가 발생했습니다.',
+      });
     }
   },
 
@@ -136,5 +159,5 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
   getValidation: () => get().result?.validation ?? null,
 
-  reset: () => set({ config: { ...DEFAULT_CONFIG }, result: null, isRunning: false }),
+  reset: () => set({ config: { ...DEFAULT_CONFIG }, result: null, isRunning: false, error: null }),
 }));

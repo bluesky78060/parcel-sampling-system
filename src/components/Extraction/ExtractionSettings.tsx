@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { ExtractionConfig } from '../../types';
 
 interface ExtractionSettingsProps {
@@ -6,6 +7,21 @@ interface ExtractionSettingsProps {
 }
 
 export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps) {
+  const [totalTargetStr, setTotalTargetStr] = useState(String(config.totalTarget));
+  const [perRiTargetStr, setPerRiTargetStr] = useState(String(config.perRiTarget));
+  const [minPerFarmerStr, setMinPerFarmerStr] = useState(String(config.minPerFarmer));
+  const [maxPerFarmerStr, setMaxPerFarmerStr] = useState(String(config.maxPerFarmer));
+  const [randomSeedStr, setRandomSeedStr] = useState(config.randomSeed !== undefined ? String(config.randomSeed) : '');
+
+  // 외부에서 config가 변경되면 로컬 문자열 상태를 동기화
+  useEffect(() => {
+    setTotalTargetStr(String(config.totalTarget));
+    setPerRiTargetStr(String(config.perRiTarget));
+    setMinPerFarmerStr(String(config.minPerFarmer));
+    setMaxPerFarmerStr(String(config.maxPerFarmer));
+    setRandomSeedStr(config.randomSeed !== undefined ? String(config.randomSeed) : '');
+  }, [config.totalTarget, config.perRiTarget, config.minPerFarmer, config.maxPerFarmer, config.randomSeed]);
+
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-1">기본 추출 파라미터</h3>
@@ -22,8 +38,18 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             type="number"
             min={100}
             max={2000}
-            value={config.totalTarget}
-            onChange={(e) => onUpdate({ totalTarget: Number(e.target.value) })}
+            value={totalTargetStr}
+            onChange={(e) => setTotalTargetStr(e.target.value)}
+            onBlur={() => {
+              const v = Number(totalTargetStr);
+              if (!isNaN(v) && totalTargetStr !== '') {
+                const clamped = Math.min(2000, Math.max(100, v));
+                onUpdate({ totalTarget: clamped });
+                setTotalTargetStr(String(clamped));
+              } else {
+                setTotalTargetStr(String(config.totalTarget));
+              }
+            }}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -38,8 +64,18 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             type="number"
             min={1}
             max={50}
-            value={config.perRiTarget}
-            onChange={(e) => onUpdate({ perRiTarget: Number(e.target.value) })}
+            value={perRiTargetStr}
+            onChange={(e) => setPerRiTargetStr(e.target.value)}
+            onBlur={() => {
+              const v = Number(perRiTargetStr);
+              if (!isNaN(v) && perRiTargetStr !== '') {
+                const clamped = Math.min(50, Math.max(1, v));
+                onUpdate({ perRiTarget: clamped });
+                setPerRiTargetStr(String(clamped));
+              } else {
+                setPerRiTargetStr(String(config.perRiTarget));
+              }
+            }}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -54,8 +90,18 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             type="number"
             min={1}
             max={config.maxPerFarmer}
-            value={config.minPerFarmer}
-            onChange={(e) => onUpdate({ minPerFarmer: Number(e.target.value) })}
+            value={minPerFarmerStr}
+            onChange={(e) => setMinPerFarmerStr(e.target.value)}
+            onBlur={() => {
+              const v = Number(minPerFarmerStr);
+              if (!isNaN(v) && minPerFarmerStr !== '') {
+                const clamped = Math.min(config.maxPerFarmer, Math.max(1, v));
+                onUpdate({ minPerFarmer: clamped });
+                setMinPerFarmerStr(String(clamped));
+              } else {
+                setMinPerFarmerStr(String(config.minPerFarmer));
+              }
+            }}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -70,8 +116,18 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             type="number"
             min={config.minPerFarmer}
             max={20}
-            value={config.maxPerFarmer}
-            onChange={(e) => onUpdate({ maxPerFarmer: Number(e.target.value) })}
+            value={maxPerFarmerStr}
+            onChange={(e) => setMaxPerFarmerStr(e.target.value)}
+            onBlur={() => {
+              const v = Number(maxPerFarmerStr);
+              if (!isNaN(v) && maxPerFarmerStr !== '') {
+                const clamped = Math.min(20, Math.max(config.minPerFarmer, v));
+                onUpdate({ maxPerFarmer: clamped });
+                setMaxPerFarmerStr(String(clamped));
+              } else {
+                setMaxPerFarmerStr(String(config.maxPerFarmer));
+              }
+            }}
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -128,10 +184,20 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
           <input
             type="number"
             min={0}
-            value={config.randomSeed ?? ''}
-            onChange={(e) => {
-              const val = e.target.value;
-              onUpdate({ randomSeed: val === '' ? undefined : Number(val) });
+            value={randomSeedStr}
+            onChange={(e) => setRandomSeedStr(e.target.value)}
+            onBlur={() => {
+              if (randomSeedStr === '') {
+                onUpdate({ randomSeed: undefined });
+              } else {
+                const v = Number(randomSeedStr);
+                if (!isNaN(v) && v >= 0) {
+                  onUpdate({ randomSeed: v });
+                  setRandomSeedStr(String(v));
+                } else {
+                  setRandomSeedStr(config.randomSeed !== undefined ? String(config.randomSeed) : '');
+                }
+              }
             }}
             placeholder="예: 42"
             className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

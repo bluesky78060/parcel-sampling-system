@@ -1,0 +1,905 @@
+{
+  "timestamp": "2026-02-24T08:21:04.181Z",
+  "reason": "compaction",
+  "status": {
+    "version": "2.0",
+    "lastUpdated": "2026-02-24T08:11:20.608Z",
+    "activeFeatures": [
+      "parcel-sampling-system",
+      "ColumnMapper",
+      "Analysis",
+      "store",
+      "Extraction",
+      "Review",
+      "Map",
+      "Layout"
+    ],
+    "primaryFeature": "parcel-sampling-system",
+    "features": {
+      "parcel-sampling-system": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T02:49:12.032Z",
+          "lastUpdated": "2026-02-24T08:11:20.608Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/pages/AnalyzePage.tsx"
+      },
+      "ColumnMapper": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T02:49:16.935Z",
+          "lastUpdated": "2026-02-24T07:58:58.091Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/ColumnMapper/ColumnMapper.tsx"
+      },
+      "Analysis": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T03:54:20.556Z",
+          "lastUpdated": "2026-02-24T05:40:27.521Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/Analysis/GeocodingProgress.tsx"
+      },
+      "store": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T03:54:32.273Z",
+          "lastUpdated": "2026-02-24T05:15:24.940Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/store/parcelStore.ts"
+      },
+      "Extraction": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T03:57:49.714Z",
+          "lastUpdated": "2026-02-24T06:14:44.694Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/Extraction/ExtractionSettings.tsx"
+      },
+      "Review": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T03:58:29.867Z",
+          "lastUpdated": "2026-02-24T06:14:43.630Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/Review/ResultTable.tsx"
+      },
+      "Map": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T04:04:08.671Z",
+          "lastUpdated": "2026-02-24T07:19:36.886Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/Map/KakaoMap.tsx"
+      },
+      "Layout": {
+        "phase": "do",
+        "phaseNumber": 3,
+        "matchRate": null,
+        "iterationCount": 0,
+        "requirements": [],
+        "documents": {},
+        "timestamps": {
+          "started": "2026-02-24T04:08:56.117Z",
+          "lastUpdated": "2026-02-24T04:11:54.694Z"
+        },
+        "lastFile": "/Users/leechanhee/parcel-sampling-system/src/components/Layout/ErrorBoundary.tsx"
+      }
+    },
+    "pipeline": {
+      "currentPhase": 1,
+      "level": "Dynamic",
+      "phaseHistory": []
+    },
+    "session": {
+      "startedAt": "2026-02-24T02:46:24.059Z",
+      "onboardingCompleted": false,
+      "lastActivity": "2026-02-24T08:11:20.608Z"
+    },
+    "history": [
+      {
+        "timestamp": "2026-02-24T02:49:12.032Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T02:49:16.935Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:50:26.694Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:50:34.087Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:50:38.446Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:50:45.135Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:50:55.785Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:52:06.891Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:52:10.270Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:53:43.190Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:01.817Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:12.052Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:20.556Z",
+        "feature": "Analysis",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:22.671Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:32.273Z",
+        "feature": "store",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:39.360Z",
+        "feature": "store",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:44.265Z",
+        "feature": "store",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:54:48.942Z",
+        "feature": "store",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:55:16.478Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:57:49.714Z",
+        "feature": "Extraction",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:58:19.634Z",
+        "feature": "Extraction",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:58:29.867Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:58:43.950Z",
+        "feature": "Extraction",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:58:53.775Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:59:19.249Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T03:59:25.833Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:00:57.018Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:00:58.085Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:01:20.539Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:01:40.916Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:03:36.269Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:04:08.671Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:04:24.230Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:04:38.437Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:05:08.727Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:05:17.044Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:05:39.624Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:08:56.117Z",
+        "feature": "Layout",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:11:54.694Z",
+        "feature": "Layout",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:12:03.711Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:12:09.873Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:21:37.823Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:21:46.481Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:25:31.183Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:25:35.773Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:25:40.046Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:42:08.361Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:42:28.340Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:42:52.360Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:43:04.203Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:43:10.225Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:43:57.231Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:44:11.407Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:44:21.473Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:44:37.427Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:44:46.206Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:45:06.528Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:45:25.214Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:45:36.561Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:45:42.935Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:46:07.296Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:46:16.804Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:46:24.479Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:47:15.491Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:47:22.226Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:47:39.745Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:47:48.104Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:48:42.801Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:48:59.556Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:49:12.128Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:49:16.357Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:49:28.362Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T04:49:36.529Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:14:50.671Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:15:00.821Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:15:24.940Z",
+        "feature": "store",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:15:43.824Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:23:23.936Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:33:37.993Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:37:40.831Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:39:15.517Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:39:25.429Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:39:34.541Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:40:27.521Z",
+        "feature": "Analysis",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:40:51.261Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:41:08.912Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:54:47.872Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T05:55:27.532Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:11:28.896Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:11:40.776Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:34.169Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:35.218Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:36.280Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:38.889Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:40.433Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:41.485Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:42.554Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:43.630Z",
+        "feature": "Review",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:44.694Z",
+        "feature": "Extraction",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:14:45.768Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:46:50.405Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T06:47:25.766Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:19:36.886Z",
+        "feature": "Map",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:20:00.183Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:20:16.673Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:34:34.161Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:34:38.552Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:34:53.138Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:39:16.841Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:39:25.232Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:39:58.226Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:41:28.211Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:41:33.542Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:41:38.181Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:56:57.109Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:57:01.860Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:57:21.285Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:57:42.112Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:02.688Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:14.962Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:23.432Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:30.757Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:35.942Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:51.757Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T07:58:58.091Z",
+        "feature": "ColumnMapper",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T08:04:50.262Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T08:11:10.247Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      },
+      {
+        "timestamp": "2026-02-24T08:11:20.608Z",
+        "feature": "parcel-sampling-system",
+        "phase": "do",
+        "action": "updated"
+      }
+    ]
+  }
+}

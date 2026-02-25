@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
@@ -7,9 +7,10 @@ import { exportToExcel } from '../lib/excelExporter';
 
 export function ExportPage() {
   const navigate = useNavigate();
-  const { allParcels, reset: resetParcel } = useParcelStore();
+  const { allParcels, representativeParcels, reset: resetParcel } = useParcelStore();
   const { result, config, reset: resetExtraction } = useExtractionStore();
   const { reset: resetFile } = useFileStore();
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!result) {
@@ -40,14 +41,27 @@ export function ExportPage() {
     .sort((a, b) => b.selectedCount - a.selectedCount)
     .slice(0, 10);
 
+  const publicPaymentCount = selectedParcels.filter(
+    (p) => (p.parcelCategory ?? 'public-payment') !== 'representative'
+  ).length;
+  const repCount = selectedParcels.filter(
+    (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
+  ).length;
+
   const handleExport = () => {
-    exportToExcel({
-      selectedParcels,
-      excludedParcels,
-      allParcels,
-      riStats,
-      farmerStats,
-    });
+    setExportError(null);
+    try {
+      exportToExcel({
+        selectedParcels,
+        representativeParcels,
+        excludedParcels,
+        allParcels,
+        riStats,
+        farmerStats,
+      });
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : '엑셀 내보내기 중 오류가 발생했습니다.');
+    }
   };
 
   const handleReset = () => {
@@ -213,9 +227,16 @@ export function ExportPage() {
           <ul className="space-y-1 text-sm text-gray-700 mb-6">
             <li>
               <span className="mr-2">📊</span>
-              2026_추출필지{' '}
-              <span className="text-gray-400">({totalSelected}행)</span>
+              2026_필지선정 (공익직불제){' '}
+              <span className="text-gray-400">({publicPaymentCount}행)</span>
             </li>
+            {repCount > 0 && (
+              <li>
+                <span className="mr-2">📊</span>
+                대표필지{' '}
+                <span className="text-gray-400">({repCount}행)</span>
+              </li>
+            )}
             <li>
               <span className="mr-2">📊</span>
               리별_통계{' '}
@@ -231,7 +252,7 @@ export function ExportPage() {
             </li>
             <li>
               <span className="mr-2">📊</span>
-              전체필지
+              전체필지 (구분 포함)
             </li>
           </ul>
           <div className="flex justify-center">
@@ -243,6 +264,9 @@ export function ExportPage() {
               엑셀 다운로드
             </button>
           </div>
+          {exportError && (
+            <p className="mt-3 text-sm text-red-600 text-center">{exportError}</p>
+          )}
         </div>
       </div>
 

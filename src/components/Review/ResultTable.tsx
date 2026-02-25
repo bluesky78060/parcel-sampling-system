@@ -17,6 +17,7 @@ interface ResultTableProps {
   onToggleSelection: (farmerId: string, parcelId: string) => void;
   onAddParcel: (parcel: Parcel) => void;
   onRemoveParcel: (farmerId: string, parcelId: string) => void;
+  targetCount: number;
 }
 
 export function ResultTable({
@@ -25,6 +26,7 @@ export function ResultTable({
   onToggleSelection: _onToggleSelection,
   onAddParcel,
   onRemoveParcel,
+  targetCount,
 }: ResultTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -47,6 +49,18 @@ export function ResultTable({
           const parcel = row.original;
           const key = `${parcel.farmerId}__${parcel.parcelId}`;
           const isSelected = selectedSet.has(key);
+          const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
+
+          if (isRep) {
+            return (
+              <span className="w-5 h-5 rounded border flex items-center justify-center bg-emerald-500 border-emerald-500 text-white cursor-not-allowed" title="대표필지 (고정)">
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            );
+          }
+
           return (
             <button
               onClick={() => {
@@ -69,6 +83,20 @@ export function ResultTable({
                 </svg>
               )}
             </button>
+          );
+        },
+        enableSorting: false,
+        size: 50,
+      },
+      {
+        id: 'category',
+        header: '구분',
+        cell: ({ row }) => {
+          const cat = row.original.parcelCategory ?? 'public-payment';
+          return cat === 'representative' ? (
+            <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-700">대표</span>
+          ) : (
+            <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-100 text-blue-700">공익</span>
           );
         },
         enableSorting: false,
@@ -202,7 +230,7 @@ export function ResultTable({
         <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
           선택:{' '}
           <span className="text-blue-600 font-semibold">{selectedParcels.length}</span>
-          <span className="text-gray-400"> / 700</span>
+          <span className="text-gray-400"> / {targetCount}</span>
         </span>
       </div>
 
@@ -253,13 +281,16 @@ export function ResultTable({
               const parcel = row.original;
               const key = `${parcel.farmerId}__${parcel.parcelId}`;
               const isSelected = selectedSet.has(key);
+              const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
 
               return (
                 <tr
                   key={row.id}
                   data-index={virtualRow.index}
                   className={`border-b border-gray-100 transition-colors ${
-                    isSelected
+                    isRep
+                      ? 'bg-emerald-50 hover:bg-emerald-100'
+                      : isSelected
                       ? 'bg-blue-50 hover:bg-blue-100'
                       : 'bg-white hover:bg-gray-50'
                   }`}
