@@ -17,6 +17,8 @@ const SYSTEM_FIELD_LABELS: Record<string, string> = {
   eubmyeondong: '읍면동',
   area: '면적',
   cropType: '작물',
+  landCategoryOfficial: '공부지목',
+  landCategoryActual: '실지목',
 };
 
 function getMappedSystemField(header: string, mapping: ColumnMapping): string | null {

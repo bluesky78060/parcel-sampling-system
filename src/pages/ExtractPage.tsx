@@ -10,6 +10,7 @@ import {
 import { ExtractionSettings } from '../components/Extraction/ExtractionSettings';
 import { SpatialSettings } from '../components/Extraction/SpatialSettings';
 import { RiTargetTable } from '../components/Extraction/RiTargetTable';
+import { LandCategorySettings } from '../components/Extraction/LandCategorySettings';
 
 export function ExtractPage() {
   const navigate = useNavigate();
@@ -25,6 +26,9 @@ export function ExtractPage() {
   const setRiTargetOverride = useExtractionStore((s) => s.setRiTargetOverride);
   const removeRiTargetOverride = useExtractionStore((s) => s.removeRiTargetOverride);
   const toggleExcludedRi = useExtractionStore((s) => s.toggleExcludedRi);
+  const setLandCategoryRatio = useExtractionStore((s) => s.setLandCategoryRatio);
+  const resetLandCategoryRatios = useExtractionStore((s) => s.resetLandCategoryRatios);
+  const toggleLandCategoryFilter = useExtractionStore((s) => s.toggleLandCategoryFilter);
   const runExtraction = useExtractionStore((s) => s.runExtraction);
 
   // allParcels가 비어있으면 /analyze로 리다이렉트
@@ -74,6 +78,19 @@ export function ExtractPage() {
       .sort((a, b) => a.ri.localeCompare(b.ri, 'ko'));
   }, [getRiDistribution]);
 
+  // 지목별 필지 수 분포 (실지목 기준)
+  const landCategoryDistribution = useMemo(() => {
+    const dist: Record<string, number> = {};
+    const eligible = allParcels.filter(
+      (p) => p.isEligible && !config.excludedRis.includes(p.ri)
+    );
+    for (const p of eligible) {
+      const cat = p.landCategoryActual || p.landCategoryOfficial || '미분류';
+      dist[cat] = (dist[cat] ?? 0) + 1;
+    }
+    return dist;
+  }, [allParcels, config.excludedRis]);
+
   const spatialConfig = config.spatialConfig!;
 
   const repCount = representativeParcels.length;
@@ -95,6 +112,16 @@ export function ExtractPage() {
 
       {/* 기본 추출 파라미터 */}
       <ExtractionSettings config={config} onUpdate={updateConfig} />
+
+      {/* 지목별 비율 설정 */}
+      <LandCategorySettings
+        categoryDistribution={landCategoryDistribution}
+        ratios={config.landCategoryRatios}
+        enabled={config.enableLandCategoryFilter}
+        onToggleEnabled={toggleLandCategoryFilter}
+        onUpdateRatio={setLandCategoryRatio}
+        onResetRatios={() => resetLandCategoryRatios(landCategoryDistribution)}
+      />
 
       {/* 공간 필터 설정 */}
       <SpatialSettings

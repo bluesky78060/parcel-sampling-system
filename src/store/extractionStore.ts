@@ -12,6 +12,8 @@ const DEFAULT_CONFIG: ExtractionConfig = {
   randomSeed: undefined,
   excludedRis: [],
   riTargetOverrides: {},
+  landCategoryRatios: {},
+  enableLandCategoryFilter: false,
   spatialConfig: {
     enableSpatialFilter: true,
     maxRiDistanceKm: 0,           // 0 = 자동 계산
@@ -31,6 +33,9 @@ interface ExtractionStore {
   setRiTargetOverride: (ri: string, target: number) => void;
   removeRiTargetOverride: (ri: string) => void;
   toggleExcludedRi: (ri: string) => void;
+  setLandCategoryRatio: (category: string, ratio: number) => void;
+  resetLandCategoryRatios: (distribution: Record<string, number>) => void;
+  toggleLandCategoryFilter: (enabled: boolean) => void;
 
   runExtraction: (allParcels: Parcel[], representativeParcels?: Parcel[]) => void;
   toggleParcelSelection: (farmerId: string, parcelId: string) => void;
@@ -80,6 +85,32 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         : [...state.config.excludedRis, ri];
       return { config: { ...state.config, excludedRis: excluded } };
     }),
+
+  setLandCategoryRatio: (category, ratio) =>
+    set((state) => ({
+      config: {
+        ...state.config,
+        landCategoryRatios: { ...state.config.landCategoryRatios, [category]: ratio },
+      },
+    })),
+
+  resetLandCategoryRatios: (distribution) =>
+    set((state) => {
+      const total = Object.values(distribution).reduce((s, n) => s + n, 0);
+      if (total === 0) return state;
+      const ratios: Record<string, number> = {};
+      for (const [cat, count] of Object.entries(distribution)) {
+        if (count > 0) {
+          ratios[cat] = Math.round((count / total) * 1000) / 10;
+        }
+      }
+      return { config: { ...state.config, landCategoryRatios: ratios } };
+    }),
+
+  toggleLandCategoryFilter: (enabled) =>
+    set((state) => ({
+      config: { ...state.config, enableLandCategoryFilter: enabled },
+    })),
 
   runExtraction: (allParcels, representativeParcels = []) => {
     set({ isRunning: true, error: null });

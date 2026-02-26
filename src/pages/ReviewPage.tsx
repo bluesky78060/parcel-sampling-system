@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
@@ -6,6 +6,7 @@ import { ResultTable } from '../components/Review/ResultTable';
 import { ValidationPanel } from '../components/Review/ValidationPanel';
 import { KakaoMap } from '../components/Map/KakaoMap';
 import { MapLegend } from '../components/Map/MapLegend';
+import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
 
 type TabId = 'table' | 'map';
@@ -22,6 +23,45 @@ export function ReviewPage() {
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
   const [showPolygons, setShowPolygons] = useState(true);
+
+  // 좌표 변환 (지도 탭에서 좌표 없을 때 사용)
+  const geocoding = useGeocoding();
+  const parcelStore = useParcelStore();
+
+  const noCoordsCount = useMemo(
+    () => allParcels.filter((p) => !p.coords).length,
+    [allParcels],
+  );
+
+  const runGeocodingInReview = useCallback(async () => {
+    const eligibleParcels = allParcels.filter((p) => p.isEligible);
+    const allForGeocoding = [...eligibleParcels, ...representativeParcels];
+    if (allForGeocoding.length === 0) return;
+
+    const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
+
+    const geocodedMap = new Map<string, Parcel>();
+    for (const gp of geocodedParcels) {
+      const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
+      geocodedMap.set(key, gp);
+    }
+
+    const updatedParcels = allParcels.map((p) => {
+      const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+      const geocoded = geocodedMap.get(key);
+      return geocoded ? { ...p, coords: geocoded.coords } : p;
+    });
+    parcelStore.updateParcels(updatedParcels);
+
+    if (representativeParcels.length > 0) {
+      const updatedRep = representativeParcels.map((p) => {
+        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
+        const geocoded = geocodedMap.get(key);
+        return geocoded ? { ...p, coords: geocoded.coords } : p;
+      });
+      parcelStore.setRepresentativeParcels(updatedRep);
+    }
+  }, [allParcels, representativeParcels, geocoding, parcelStore]);
 
   // ESC키로 전체화면 종료
   useEffect(() => {
@@ -179,6 +219,54 @@ export function ReviewPage() {
             ? 'fixed inset-0 z-[9999] bg-white flex flex-col'
             : 'flex flex-col gap-3'
         }>
+          {/* 좌표 변환 안내 (좌표 없을 때) */}
+          {noCoordsCount > 0 && geocoding.isAvailable && !isMapFullscreen && (
+            <div className="rounded-lg border border-orange-200 bg-orange-50 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-orange-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-orange-800">
+                      좌표 없는 필지 {noCoordsCount.toLocaleString()}건
+                    </p>
+                    <p className="text-xs text-orange-600">
+                      좌표 변환을 실행해야 지도에 마커가 표시됩니다.
+                    </p>
+                  </div>
+                </div>
+                {!geocoding.state.isRunning && !geocoding.state.isComplete && (
+                  <button
+                    onClick={runGeocodingInReview}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 transition-colors flex-shrink-0 ml-4"
+                  >
+                    좌표 변환 시작
+                  </button>
+                )}
+                {geocoding.state.isRunning && (
+                  <div className="flex items-center gap-3 ml-4">
+                    <div className="text-sm text-orange-700 font-medium">
+                      {geocoding.state.progress.done}/{geocoding.state.progress.total}건
+                    </div>
+                    <button
+                      onClick={geocoding.cancelGeocoding}
+                      className="px-3 py-1.5 text-xs text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50"
+                    >
+                      취소
+                    </button>
+                  </div>
+                )}
+                {geocoding.state.isComplete && (
+                  <span className="text-sm text-green-700 font-medium ml-4">
+                    변환 완료 ({geocoding.state.progress.done - geocoding.state.progress.failed}건 성공)
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* 상단: 필터 바 */}
           <div className={`flex items-center gap-4 bg-white border border-gray-200 px-4 py-2.5 ${isMapFullscreen ? 'border-b shrink-0' : 'rounded-lg'}`}>
             <label className="text-sm font-medium text-gray-700 flex-shrink-0">리 필터</label>

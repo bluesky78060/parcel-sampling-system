@@ -179,6 +179,9 @@ export function useMarkerLayer({
     });
 
     const parcelsWithCoords = displayParcels.filter((p) => p.coords);
+    console.info(
+      `[마커] 전체 ${parcels.length}건 → 필터 후 ${displayParcels.length}건 → 좌표 있음 ${parcelsWithCoords.length}건`
+    );
     const bounds: L.LatLngTuple[] = [];
     let outCount = 0;
     let countSelected = 0;

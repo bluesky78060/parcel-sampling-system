@@ -30,6 +30,8 @@ const SYSTEM_FIELDS: SystemField[] = [
   { key: 'eubmyeondong',  label: '읍면동',    required: false, keywords: ['읍면동명', '읍면동', '법정읍면동', '행정읍면동', '읍면', '읍·면·동'] },
   { key: 'area',          label: '면적',      required: false, keywords: ['면적', '재배면적', '경작면적', '필지면적', '넓이', '규모'] },
   { key: 'cropType',      label: '작물',      required: false, keywords: ['작물', '작목', '품목', '품종', '재배작물', '작목명', '작물명', '품목명'] },
+  { key: 'landCategoryOfficial', label: '공부지목', required: false, keywords: ['공부지목', '지목', '지목명', '토지지목', '토지종류', '지목코드'] },
+  { key: 'landCategoryActual',   label: '실지목',   required: false, keywords: ['실지목', '실제지목'] },
   { key: 'pnu',           label: 'PNU코드',   required: false, keywords: ['직불신청_pnu', 'pnu코드', 'pnu', 'PNU', '필지고유번호'] },
 ];
 
@@ -82,6 +84,8 @@ function buildInitialMapping(
     eubmyeondong: existing.eubmyeondong || '',
     area: existing.area || '',
     cropType: existing.cropType || '',
+    landCategoryOfficial: existing.landCategoryOfficial || '',
+    landCategoryActual: existing.landCategoryActual || '',
     pnu: existing.pnu || '',
   };
 

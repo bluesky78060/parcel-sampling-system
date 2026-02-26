@@ -55,6 +55,12 @@ export function KakaoMap({
     polygonCentroidCacheRef,
   });
 
+  // 좌표 없는 필지 수 계산
+  const noCoordsCount = useMemo(
+    () => parcels.filter((p) => !p.coords).length,
+    [parcels],
+  );
+
   // 3. Polygon layer (VWORLD cadastral feature API)
   const { polygonZoomWarning } = usePolygonLayer({
     mapRef,
@@ -111,9 +117,29 @@ export function KakaoMap({
           <span className="text-gray-700">미선택 필지 표시</span>
         </label>
       </div>
-      {outOfRangeCount > 0 && (
-        <div className="absolute top-12 left-12 z-[1000] bg-amber-50 border border-amber-300 rounded-md px-3 py-1.5 text-xs text-amber-700 shadow-sm">
-          봉화군 범위 밖 좌표 {outOfRangeCount.toLocaleString()}건 제외됨
+      {/* 경고 배지 (top-12 위치에 세로 배치) */}
+      <div className="absolute top-12 left-12 z-[1000] flex flex-col gap-1">
+        {outOfRangeCount > 0 && (
+          <div className="bg-amber-50 border border-amber-300 rounded-md px-3 py-1.5 text-xs text-amber-700 shadow-sm">
+            봉화군 범위 밖 좌표 {outOfRangeCount.toLocaleString()}건 제외됨
+          </div>
+        )}
+        {noCoordsCount > 0 && (
+          <div className="bg-orange-50 border border-orange-300 rounded-md px-3 py-1.5 text-xs text-orange-700 shadow-sm">
+            좌표 없는 필지 {noCoordsCount.toLocaleString()}건 (데이터 분석에서 좌표 변환 실행 필요)
+          </div>
+        )}
+      </div>
+      {markerCounts.total === 0 && parcels.length > 0 && (
+        <div className="absolute inset-0 flex items-center justify-center z-[999] pointer-events-none">
+          <div className="bg-white/90 backdrop-blur border border-gray-300 rounded-lg px-6 py-4 text-center shadow-lg pointer-events-auto">
+            <p className="text-sm font-semibold text-gray-700 mb-1">표시할 마커가 없습니다</p>
+            <p className="text-xs text-gray-500">
+              {noCoordsCount > 0
+                ? '데이터 분석 페이지에서 "좌표 변환" 버튼을 클릭하여 좌표를 생성하세요.'
+                : '필지 좌표가 봉화군 범위 밖이거나 필터 조건에 맞는 필지가 없습니다.'}
+            </p>
+          </div>
         </div>
       )}
       {polygonZoomWarning && showPolygons && (

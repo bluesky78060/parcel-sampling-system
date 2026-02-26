@@ -159,6 +159,8 @@ export function applyColumnMapping(
       sigungu: mapping.sigungu ? String(row[mapping.sigungu] ?? '') : parseSigunguFromAddress(address),
       eubmyeondong: mapping.eubmyeondong ? String(row[mapping.eubmyeondong] ?? '') : parseEubmyeondongFromAddress(address),
       cropType: mapping.cropType ? String(row[mapping.cropType] ?? '') : undefined,
+      landCategoryOfficial: mapping.landCategoryOfficial ? String(row[mapping.landCategoryOfficial] ?? '').trim() : undefined,
+      landCategoryActual: mapping.landCategoryActual ? String(row[mapping.landCategoryActual] ?? '').trim() : undefined,
       area: mapping.area ? parseFloat(String(row[mapping.area] ?? '0')) || undefined : undefined,
       pnu: extractPnu(row, mapping),
       sampledYears: year ? [year] : [],

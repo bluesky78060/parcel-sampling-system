@@ -18,6 +18,8 @@ export interface Parcel {
   sigungu: string;
   eubmyeondong: string;
   cropType?: string;
+  landCategoryOfficial?: string;   // 공부지목 (전, 답, 과수원, 임야 등)
+  landCategoryActual?: string;     // 실지목
   area?: number;
   sampledYears: number[];
   isEligible: boolean;
@@ -57,6 +59,8 @@ export interface ColumnMapping {
   eubmyeondong?: string;
   area?: string;
   cropType?: string;
+  landCategoryOfficial?: string;    // 공부지목
+  landCategoryActual?: string;     // 실지목
   pnu?: string;
 }
 
@@ -77,6 +81,8 @@ export interface ExtractionConfig {
   randomSeed?: number;
   excludedRis: string[];
   riTargetOverrides: Record<string, number>;
+  landCategoryRatios: Record<string, number>;  // 지목별 비율 (예: { '전': 40, '답': 40, '과수원': 20 })
+  enableLandCategoryFilter: boolean;            // 지목별 비율 필터 활성화
   spatialConfig?: SpatialConfig;
 }
 

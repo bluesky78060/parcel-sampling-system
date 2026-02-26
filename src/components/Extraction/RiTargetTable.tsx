@@ -40,12 +40,19 @@ export function RiTargetTable({
               <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 w-36">
                 목표 수
               </th>
-              <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 w-16">
+              <th className="px-3 py-2 text-center text-xs font-medium text-red-500 w-16">
                 제외
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
+            {riList.length === 0 && (
+              <tr>
+                <td colSpan={4} className="px-4 py-8 text-center text-sm text-gray-400">
+                  추출 가능한 리 데이터가 없습니다. 데이터를 먼저 불러와주세요.
+                </td>
+              </tr>
+            )}
             {riList.map(({ ri, eligibleCount }) => {
               const isExcluded = excludedRis.includes(ri);
               const hasOverride = ri in overrides;

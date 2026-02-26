@@ -11,6 +11,49 @@ import type {
 import { calculateDensity, clusterParcelsInRi, findDistantRis, findDistantPairs, haversineDistance } from './spatialUtils';
 
 /**
+ * 실지목 우선, 없으면 공부지목, 둘 다 없으면 '미분류'
+ */
+function getActualLandCategory(p: Parcel): string {
+  return p.landCategoryActual || p.landCategoryOfficial || '미분류';
+}
+
+/**
+ * 필지 면적 가져오기 (area 필드 → rawData 폴백)
+ * 면적 정보가 없으면 null 반환
+ * 우선순위: 합산면적 > 전체면적 > 개별면적(노지) 순
+ */
+function getParcelArea(p: Parcel): number | null {
+  if (p.area != null && p.area > 0) return p.area;
+  if (!p.rawData) return null;
+
+  // 합산/전체 면적 키를 우선 탐색 (부분면적 제외)
+  const areaKeys = ['재배면적(노지+시설)', '재배면적', '필지면적', '경작면적', '면적'];
+  const rawKeys = Object.keys(p.rawData);
+
+  // 1차: 정확 매칭
+  for (const ak of areaKeys) {
+    const v = p.rawData[ak];
+    if (v != null) {
+      const n = parseFloat(String(v));
+      if (!isNaN(n) && n > 0) return n;
+    }
+  }
+
+  // 2차: 공백 제거 매칭
+  for (const ak of areaKeys) {
+    const normAk = ak.replace(/\s/g, '');
+    for (const rk of rawKeys) {
+      if (rk.replace(/\s/g, '') === normAk) {
+        const n = parseFloat(String(p.rawData[rk]));
+        if (!isNaN(n) && n > 0) return n;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
  * 시드 기반 의사 난수 생성기 (Mulberry32)
  */
 function createRng(seed: number): () => number {
@@ -170,6 +213,19 @@ export function extractParcels(
     p => p.isEligible && !config.excludedRis.includes(p.ri)
   );
 
+  // Step 1b: 면적 500㎡ 미만 필지 제외
+  const MIN_AREA = 500;
+  const beforeAreaFilter = candidates.length;
+  candidates = candidates.filter(p => {
+    const area = getParcelArea(p);
+    if (area === null) return true; // 면적 정보 없으면 제외하지 않음
+    return area >= MIN_AREA;      // 0 포함, 500㎡ 미만 모두 제외
+  });
+  const areaExcluded = beforeAreaFilter - candidates.length;
+  if (areaExcluded > 0) {
+    console.info(`[추출] 면적 ${MIN_AREA}㎡ 미만 제외: ${areaExcluded}건`);
+  }
+
   // Step 1-1: 공간 필터 활성화 시 먼 리 자동 제외
   if (config.spatialConfig?.enableSpatialFilter) {
     const distantRis = findDistantRis(candidates, config.spatialConfig.maxRiDistanceKm || undefined);
@@ -228,6 +284,11 @@ export function extractParcels(
         farmerCounts[p.farmerId] = currentCount + 1;
       }
     }
+  }
+
+  // Step 5: 지목별 비율 필터 적용
+  if (config.enableLandCategoryFilter && Object.keys(config.landCategoryRatios).length > 0) {
+    applyLandCategoryRatios(selected, candidates, config, rng);
   }
 
   // 선택 마킹
@@ -350,9 +411,144 @@ function validateExtraction(
     });
   }
 
+  // 지목별 비율 검증 (실지목 기준)
+  if (config.enableLandCategoryFilter && Object.keys(config.landCategoryRatios).length > 0) {
+    const catCounts: Record<string, number> = {};
+    for (const p of selectedParcels) {
+      const cat = getActualLandCategory(p);
+      catCounts[cat] = (catCounts[cat] ?? 0) + 1;
+    }
+    const totalSelected = selectedParcels.length;
+    const deviations: string[] = [];
+    for (const [cat, targetRatio] of Object.entries(config.landCategoryRatios)) {
+      if (targetRatio <= 0) continue;
+      const actualCount = catCounts[cat] ?? 0;
+      const actualRatio = totalSelected > 0 ? (actualCount / totalSelected) * 100 : 0;
+      const diff = Math.abs(actualRatio - targetRatio);
+      if (diff > 5) {
+        deviations.push(`${cat}: 목표 ${targetRatio.toFixed(1)}% → 실제 ${actualRatio.toFixed(1)}%`);
+      }
+    }
+    if (deviations.length > 0) {
+      warnings.push({
+        code: 'LAND_CATEGORY_DEVIATION',
+        message: `${deviations.length}개 지목에서 비율 편차가 5%p 이상입니다`,
+        details: deviations.join(', '),
+      });
+    }
+  }
+
   return {
     isValid: errors.length === 0,
     warnings,
     errors,
   };
+}
+
+/**
+ * 지목별 비율에 따라 선택된 필지를 조정
+ * - 초과 지목에서 제거 → 미달 지목에서 보충
+ */
+function applyLandCategoryRatios(
+  selected: Parcel[],
+  candidates: Parcel[],
+  config: ExtractionConfig,
+  rng: () => number
+): void {
+  const ratios = config.landCategoryRatios;
+  const totalTarget = config.totalTarget;
+  const totalRatio = Object.values(ratios).reduce((s, r) => s + r, 0);
+  if (totalRatio <= 0) return;
+
+  // 지목별 목표 수 계산
+  const categoryTargets: Record<string, number> = {};
+  let assignedCount = 0;
+  const entries = Object.entries(ratios).filter(([, r]) => r > 0);
+  for (let i = 0; i < entries.length; i++) {
+    const [cat, ratio] = entries[i];
+    if (i === entries.length - 1) {
+      // 마지막 지목은 나머지를 할당 (반올림 오차 방지)
+      categoryTargets[cat] = totalTarget - assignedCount;
+    } else {
+      const t = Math.round((ratio / totalRatio) * totalTarget);
+      categoryTargets[cat] = t;
+      assignedCount += t;
+    }
+  }
+
+  // 현재 선택된 필지의 지목별 그룹핑
+  const selectedByCategory: Record<string, Parcel[]> = {};
+  for (const p of selected) {
+    const cat = getActualLandCategory(p);
+    if (!selectedByCategory[cat]) selectedByCategory[cat] = [];
+    selectedByCategory[cat].push(p);
+  }
+
+  // 선택되지 않은 후보 필지
+  const selectedKeySet = new Set(selected.map(p => `${p.farmerId}_${p.parcelId}`));
+  const remaining = candidates.filter(p => !selectedKeySet.has(`${p.farmerId}_${p.parcelId}`));
+  const remainingByCategory: Record<string, Parcel[]> = {};
+  for (const p of remaining) {
+    const cat = getActualLandCategory(p);
+    if (!remainingByCategory[cat]) remainingByCategory[cat] = [];
+    remainingByCategory[cat].push(p);
+  }
+
+  // 초과 지목에서 제거
+  const removed: Parcel[] = [];
+  for (const [cat, target] of Object.entries(categoryTargets)) {
+    const current = selectedByCategory[cat] ?? [];
+    if (current.length > target) {
+      const shuffled = shuffle(current, rng);
+      const excess = shuffled.slice(target);
+      removed.push(...excess);
+      selectedByCategory[cat] = shuffled.slice(0, target);
+    }
+  }
+
+  // 비율 목표에 없는 지목의 필지도 초과분으로 처리
+  for (const [cat, parcels] of Object.entries(selectedByCategory)) {
+    if (!(cat in categoryTargets)) {
+      removed.push(...parcels);
+      selectedByCategory[cat] = [];
+    }
+  }
+
+  // selected 배열 재구성 (초과분 제거)
+  const keptKeys = new Set<string>();
+  for (const parcels of Object.values(selectedByCategory)) {
+    for (const p of parcels) keptKeys.add(`${p.farmerId}_${p.parcelId}`);
+  }
+
+  // selected 배열에서 초과분 제거
+  let i = selected.length;
+  while (i--) {
+    const key = `${selected[i].farmerId}_${selected[i].parcelId}`;
+    if (!keptKeys.has(key)) {
+      selected.splice(i, 1);
+    }
+  }
+
+  // 미달 지목에서 보충
+  for (const [cat, target] of Object.entries(categoryTargets)) {
+    const current = (selectedByCategory[cat] ?? []).length;
+    if (current < target) {
+      const pool = remainingByCategory[cat] ?? [];
+      // 제거된 필지 중 이 지목의 필지도 후보에 추가
+      const removedOfCat = removed.filter(p => (getActualLandCategory(p)) === cat);
+      const combinedPool = [...pool, ...removedOfCat];
+      const shuffled = shuffle(combinedPool, rng);
+      const need = target - current;
+      let added = 0;
+      for (let j = 0; j < shuffled.length && added < need; j++) {
+        const p = shuffled[j];
+        const key = `${p.farmerId}_${p.parcelId}`;
+        if (!keptKeys.has(key)) {
+          selected.push(p);
+          keptKeys.add(key);
+          added++;
+        }
+      }
+    }
+  }
 }
