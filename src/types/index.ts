@@ -73,6 +73,8 @@ export interface SpatialConfig {
 
 export interface ExtractionConfig {
   totalTarget: number;
+  publicPaymentTarget: number;     // 공익직불제 추출 목표
+  representativeTarget: number;    // 대표필지 추출 목표
   perRiTarget: number;
   minPerFarmer: number;
   maxPerFarmer: number;
@@ -84,6 +86,9 @@ export interface ExtractionConfig {
   landCategoryRatios: Record<string, number>;  // 지목별 비율 (예: { '전': 40, '답': 40, '과수원': 20 })
   enableLandCategoryFilter: boolean;            // 지목별 비율 필터 활성화
   spatialConfig?: SpatialConfig;
+  referenceCentroid?: LatLng;  // 대표필지 중심 좌표 (먼 리 제외 기준)
+  repCoordsByRi?: Record<string, LatLng[]>;  // 리별 대표필지 좌표 (리 내 추출 시 근처 우선)
+  repParcelKeys?: Set<string>;  // 대표필지 키 셋 (우선 추출 대상)
 }
 
 export interface ExtractionResult {

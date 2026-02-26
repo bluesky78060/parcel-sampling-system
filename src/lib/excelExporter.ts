@@ -9,6 +9,7 @@ interface ExportData {
   allParcels: Parcel[];
   riStats: RiStat[];
   farmerStats: FarmerStat[];
+  duplicateKeys?: Set<string>;  // 공익직불제 ↔ 대표필지 중복 키
 }
 
 /**
@@ -24,20 +25,21 @@ export function exportToExcel(data: ExportData): void {
   }
 
   const wb = XLSX.utils.book_new();
+  const dupKeys = data.duplicateKeys ?? new Set<string>();
 
   // 시트 1: 공익직불제 필지선정 (대표필지 제외)
   const publicPaymentParcels = data.selectedParcels.filter(
     (p) => (p.parcelCategory ?? 'public-payment') !== 'representative'
   );
-  const selectedSheet = createSelectedSheet(publicPaymentParcels);
+  const selectedSheet = createSelectedSheet(publicPaymentParcels, dupKeys);
   XLSX.utils.book_append_sheet(wb, selectedSheet, '2026_필지선정');
 
-  // 시트 2: 대표필지 (별도 시트, 동일 19컬럼 포맷)
+  // 시트 2: 대표필지 (별도 시트, 동일 포맷)
   const repParcels = data.selectedParcels.filter(
     (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
   );
   if (repParcels.length > 0) {
-    const repSheet = createSelectedSheet(repParcels);
+    const repSheet = createSelectedSheet(repParcels, dupKeys);
     XLSX.utils.book_append_sheet(wb, repSheet, '대표필지');
   }
 
@@ -116,9 +118,14 @@ function getRawNum(p: Parcel, ...keys: string[]): number {
   return isNaN(n) ? 0 : n;
 }
 
-function createSelectedSheet(parcels: Parcel[]): XLSX.WorkSheet {
-  // 원본 파일(공익직불금 신청자 명단) 컬럼 기준
+function getParcelKey(p: Parcel): string {
+  return p.pnu || `${p.address}__${p.parcelId}`;
+}
+
+function createSelectedSheet(parcels: Parcel[], duplicateKeys: Set<string> = new Set()): XLSX.WorkSheet {
+  // 첫 컬럼: 중복여부, 이후 원본 파일 컬럼 기준
   const headers = [
+    '중복여부',
     '직불신청_경영체번호', '직불신청_PNU', '경영체명', '경영체주소',
     '필지주소', '읍면', '리동', '본번', '부번',
     '전화번호', '휴대전화번호',
@@ -127,52 +134,58 @@ function createSelectedSheet(parcels: Parcel[]): XLSX.WorkSheet {
     '위도', '경도',
   ];
 
-  const dataRows = parcels.map(p => [
-    p.farmerId,                                                                  // 직불신청_경영체번호
-    p.pnu || getRaw(p, '직불신청_PNU', 'pnu', 'PNU'),                             // 직불신청_PNU
-    p.farmerName,                                                                // 경영체명
-    p.farmerAddress || p.address,                                                // 경영체주소
-    p.address,                                                                   // 필지주소
-    p.eubmyeondong || getRaw(p, '읍면'),                                          // 읍면
-    p.ri || getRaw(p, '리동'),                                                    // 리동
-    p.mainLotNum || getRaw(p, '본번'),                                            // 본번
-    p.subLotNum || getRaw(p, '부번'),                                             // 부번
-    getRaw(p, '전화번호', '유선전화번호', '0유선전화번호'),                           // 전화번호
-    getRaw(p, '휴대전화번호', '무선전화번호', '0무선전화번호', '휴대폰'),              // 휴대전화번호
-    p.landCategoryOfficial || getRaw(p, '공부지목', '지목'),                        // 공부지목
-    p.landCategoryActual || getRaw(p, '실제지목', '실지목'),                        // 실제지목
-    p.area != null ? p.area : (getRawNum(p, '재배면적(노지+시설)', '재배면적', '노지재배면적') || ''), // 재배면적(노지+시설)
-    p.cropType || getRaw(p, '품목코드'),                                           // 품목코드
-    getRaw(p, '품목명_대분류명'),                                                  // 품목명_대분류명
-    getRaw(p, '품목명_중분류명'),                                                  // 품목명_중분류명
-    getRaw(p, '품목명_소분류명', '품목명', '품목', '작물명'),                         // 품목명_소분류명
-    p.coords?.lat ?? '',                                                         // 위도
-    p.coords?.lng ?? '',                                                         // 경도
-  ]);
+  const dataRows = parcels.map(p => {
+    const key = getParcelKey(p);
+    const isDup = duplicateKeys.has(key) ? 'O' : '';
+    return [
+      isDup,                                                                       // 중복여부
+      p.farmerId,                                                                  // 직불신청_경영체번호
+      p.pnu || getRaw(p, '직불신청_PNU', 'pnu', 'PNU'),                             // 직불신청_PNU
+      p.farmerName,                                                                // 경영체명
+      p.farmerAddress || getRaw(p, '경영체주소', '경영체 주소', '농가주소', '주소지'),     // 경영체주소
+      p.address,                                                                   // 필지주소
+      p.eubmyeondong || getRaw(p, '읍면'),                                          // 읍면
+      p.ri || getRaw(p, '리동'),                                                    // 리동
+      p.mainLotNum || getRaw(p, '본번'),                                            // 본번
+      p.subLotNum || getRaw(p, '부번'),                                             // 부번
+      getRaw(p, '전화번호', '유선전화번호', '0유선전화번호'),                           // 전화번호
+      getRaw(p, '휴대전화번호', '무선전화번호', '0무선전화번호', '휴대폰'),              // 휴대전화번호
+      p.landCategoryOfficial || getRaw(p, '공부지목', '지목'),                        // 공부지목
+      p.landCategoryActual || getRaw(p, '실제지목', '실지목'),                        // 실제지목
+      p.area != null ? p.area : (getRawNum(p, '재배면적(노지+시설)', '재배면적', '노지재배면적') || ''), // 재배면적(노지+시설)
+      p.cropType || getRaw(p, '품목코드'),                                           // 품목코드
+      getRaw(p, '품목명_대분류명'),                                                  // 품목명_대분류명
+      getRaw(p, '품목명_중분류명'),                                                  // 품목명_중분류명
+      getRaw(p, '품목명_소분류명', '품목명', '품목', '작물명'),                         // 품목명_소분류명
+      p.coords?.lat ?? '',                                                         // 위도
+      p.coords?.lng ?? '',                                                         // 경도
+    ];
+  });
 
   const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows]);
 
   ws['!cols'] = [
-    { wch: 16 },    // A: 직불신청_경영체번호
-    { wch: 22 },    // B: 직불신청_PNU
-    { wch: 9 },     // C: 경영체명
-    { wch: 40 },    // D: 경영체주소
-    { wch: 40 },    // E: 필지주소
-    { wch: 8.43 },  // F: 읍면
-    { wch: 8.43 },  // G: 리동
-    { wch: 6.16 },  // H: 본번
-    { wch: 6.16 },  // I: 부번
-    { wch: 14 },    // J: 전화번호
-    { wch: 14 },    // K: 휴대전화번호
-    { wch: 9 },     // L: 공부지목
-    { wch: 9 },     // M: 실제지목
-    { wch: 16 },    // N: 재배면적(노지+시설)
-    { wch: 9 },     // O: 품목코드
-    { wch: 14 },    // P: 품목명_대분류명
-    { wch: 14 },    // Q: 품목명_중분류명
-    { wch: 14 },    // R: 품목명_소분류명
-    { wch: 12 },    // S: 위도
-    { wch: 12 },    // T: 경도
+    { wch: 8 },     // A: 중복여부
+    { wch: 16 },    // B: 직불신청_경영체번호
+    { wch: 22 },    // C: 직불신청_PNU
+    { wch: 9 },     // D: 경영체명
+    { wch: 40 },    // E: 경영체주소
+    { wch: 40 },    // F: 필지주소
+    { wch: 8.43 },  // G: 읍면
+    { wch: 8.43 },  // H: 리동
+    { wch: 6.16 },  // I: 본번
+    { wch: 6.16 },  // J: 부번
+    { wch: 14 },    // K: 전화번호
+    { wch: 14 },    // L: 휴대전화번호
+    { wch: 9 },     // M: 공부지목
+    { wch: 9 },     // N: 실제지목
+    { wch: 16 },    // O: 재배면적(노지+시설)
+    { wch: 9 },     // P: 품목코드
+    { wch: 14 },    // Q: 품목명_대분류명
+    { wch: 14 },    // R: 품목명_중분류명
+    { wch: 14 },    // S: 품목명_소분류명
+    { wch: 12 },    // T: 위도
+    { wch: 12 },    // U: 경도
   ];
 
   return ws;

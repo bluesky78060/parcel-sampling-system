@@ -109,7 +109,8 @@ export function applyColumnMapping(
       address = parts.join(' ');
     }
     const farmerAddress = mapping.farmerAddress ? String(row[mapping.farmerAddress] ?? '') : '';
-    const ri = mapping.ri ? String(row[mapping.ri] ?? '') : parseRiFromAddress(address);
+    const riRaw = mapping.ri ? String(row[mapping.ri] ?? '').trim() : '';
+    const ri = riRaw || parseRiFromAddress(address);
 
     // 필지번호: 통합(single) 또는 본번+부번 분리(split)
     let parcelId: string;

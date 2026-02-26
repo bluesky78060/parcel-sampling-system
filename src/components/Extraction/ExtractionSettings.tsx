@@ -7,7 +7,8 @@ interface ExtractionSettingsProps {
 }
 
 export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps) {
-  const [totalTargetStr, setTotalTargetStr] = useState(String(config.totalTarget));
+  const [publicPaymentTargetStr, setPublicPaymentTargetStr] = useState(String(config.publicPaymentTarget));
+  const [representativeTargetStr, setRepresentativeTargetStr] = useState(String(config.representativeTarget));
   const [perRiTargetStr, setPerRiTargetStr] = useState(String(config.perRiTarget));
   const [minPerFarmerStr, setMinPerFarmerStr] = useState(String(config.minPerFarmer));
   const [maxPerFarmerStr, setMaxPerFarmerStr] = useState(String(config.maxPerFarmer));
@@ -15,45 +16,86 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
 
   // 외부에서 config가 변경되면 로컬 문자열 상태를 동기화
   useEffect(() => {
-    setTotalTargetStr(String(config.totalTarget));
+    setPublicPaymentTargetStr(String(config.publicPaymentTarget));
+    setRepresentativeTargetStr(String(config.representativeTarget));
     setPerRiTargetStr(String(config.perRiTarget));
     setMinPerFarmerStr(String(config.minPerFarmer));
     setMaxPerFarmerStr(String(config.maxPerFarmer));
     setRandomSeedStr(config.randomSeed !== undefined ? String(config.randomSeed) : '');
-  }, [config.totalTarget, config.perRiTarget, config.minPerFarmer, config.maxPerFarmer, config.randomSeed]);
+  }, [config.publicPaymentTarget, config.representativeTarget, config.perRiTarget, config.minPerFarmer, config.maxPerFarmer, config.randomSeed]);
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 p-6">
       <h3 className="text-lg font-semibold text-gray-900 mb-1">기본 추출 파라미터</h3>
       <p className="text-sm text-gray-500 mb-6">추출 목표 수량과 방식을 설정합니다.</p>
 
-      <div className="grid grid-cols-2 gap-6">
-        {/* 총 추출 목표 */}
+      {/* 추출 목표 (공익직불제 + 대표필지) */}
+      <div className="grid grid-cols-3 gap-4 mb-6">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            총 추출 목표
+            공익직불제 추출 목표
           </label>
-          <p className="text-xs text-gray-400 mb-2">전체에서 추출할 필지 수 (100~2000)</p>
+          <p className="text-xs text-gray-400 mb-2">공익직불제 필지 추출 수 (0~2000)</p>
           <input
             type="number"
-            min={100}
+            min={0}
             max={2000}
-            value={totalTargetStr}
-            onChange={(e) => setTotalTargetStr(e.target.value)}
+            value={publicPaymentTargetStr}
+            onChange={(e) => setPublicPaymentTargetStr(e.target.value)}
             onBlur={() => {
-              const v = Number(totalTargetStr);
-              if (!isNaN(v) && totalTargetStr !== '') {
-                const clamped = Math.min(2000, Math.max(100, v));
-                onUpdate({ totalTarget: clamped });
-                setTotalTargetStr(String(clamped));
+              const v = Number(publicPaymentTargetStr);
+              if (!isNaN(v) && publicPaymentTargetStr !== '') {
+                const clamped = Math.min(2000, Math.max(0, v));
+                onUpdate({
+                  publicPaymentTarget: clamped,
+                  totalTarget: clamped + config.representativeTarget,
+                });
+                setPublicPaymentTargetStr(String(clamped));
               } else {
-                setTotalTargetStr(String(config.totalTarget));
+                setPublicPaymentTargetStr(String(config.publicPaymentTarget));
               }
             }}
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full border border-blue-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            대표필지 추출 목표
+          </label>
+          <p className="text-xs text-gray-400 mb-2">대표필지 포함 수 (0 = 전부 포함)</p>
+          <input
+            type="number"
+            min={0}
+            max={500}
+            value={representativeTargetStr}
+            onChange={(e) => setRepresentativeTargetStr(e.target.value)}
+            onBlur={() => {
+              const v = Number(representativeTargetStr);
+              if (!isNaN(v) && representativeTargetStr !== '') {
+                const clamped = Math.min(500, Math.max(0, v));
+                onUpdate({
+                  representativeTarget: clamped,
+                  totalTarget: config.publicPaymentTarget + clamped,
+                });
+                setRepresentativeTargetStr(String(clamped));
+              } else {
+                setRepresentativeTargetStr(String(config.representativeTarget));
+              }
+            }}
+            className="w-full border border-emerald-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+          />
+        </div>
+        <div className="flex flex-col justify-end">
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            총 목표
+          </label>
+          <div className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-800">
+            {config.publicPaymentTarget + config.representativeTarget}개
+          </div>
+        </div>
+      </div>
 
+      <div className="grid grid-cols-2 gap-6">
         {/* 리당 추출 수 */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

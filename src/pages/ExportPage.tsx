@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
@@ -48,6 +48,21 @@ export function ExportPage() {
     (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
   ).length;
 
+  // 공익직불제 ↔ 대표필지 중복 키 계산
+  const duplicateKeys = useMemo(() => {
+    const repKeys = new Set<string>();
+    for (const p of representativeParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key) repKeys.add(key);
+    }
+    const dupKeys = new Set<string>();
+    for (const p of allParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key && repKeys.has(key)) dupKeys.add(key);
+    }
+    return dupKeys;
+  }, [allParcels, representativeParcels]);
+
   const handleExport = () => {
     setExportError(null);
     try {
@@ -58,6 +73,7 @@ export function ExportPage() {
         allParcels,
         riStats,
         farmerStats,
+        duplicateKeys,
       });
     } catch (err) {
       setExportError(err instanceof Error ? err.message : '엑셀 내보내기 중 오류가 발생했습니다.');

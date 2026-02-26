@@ -94,7 +94,27 @@ export function ExtractPage() {
   const spatialConfig = config.spatialConfig!;
 
   const repCount = representativeParcels.length;
-  const effectiveTarget = Math.max(0, config.totalTarget - repCount);
+
+  // 공익직불제 ↔ 대표필지 중복 감지 (PNU 또는 주소+필지번호 기준)
+  const duplicates = useMemo(() => {
+    if (repCount === 0 || allParcels.length === 0) return { keys: new Set<string>(), count: 0 };
+
+    // 대표필지 키 집합 생성
+    const repKeys = new Set<string>();
+    for (const p of representativeParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key) repKeys.add(key);
+    }
+
+    // 공익직불제 필지 중 대표필지와 겹치는 키 찾기
+    const dupKeys = new Set<string>();
+    for (const p of allParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key && repKeys.has(key)) dupKeys.add(key);
+    }
+
+    return { keys: dupKeys, count: dupKeys.size };
+  }, [allParcels, representativeParcels, repCount]);
 
   const handleRunExtraction = () => {
     runExtraction(allParcels, representativeParcels);
@@ -143,26 +163,52 @@ export function ExtractPage() {
         onToggleExclude={toggleExcludedRi}
       />
 
-      {/* 대표필지 정보 (있을 때만 표시) */}
+      {/* 대표필지 정보 + 중복 경고 */}
       {repCount > 0 && (
         <div className="bg-emerald-50 rounded-lg border border-emerald-200 p-4">
           <div className="flex items-center gap-2 mb-2">
             <span className="w-3 h-3 rounded-full bg-emerald-500 flex-shrink-0" />
-            <h3 className="text-sm font-semibold text-emerald-800">대표필지 포함</h3>
+            <h3 className="text-sm font-semibold text-emerald-800">대표필지 정보</h3>
           </div>
           <div className="grid grid-cols-3 gap-4 text-sm">
             <div>
-              <span className="text-emerald-600">대표필지</span>
-              <p className="font-semibold text-emerald-900">{repCount}개 (고정)</p>
+              <span className="text-emerald-600">업로드된 대표필지</span>
+              <p className="font-semibold text-emerald-900">{repCount}개</p>
+            </div>
+            <div>
+              <span className="text-emerald-600">추출 포함 목표</span>
+              <p className="font-semibold text-emerald-900">
+                {config.representativeTarget > 0 ? `${config.representativeTarget}개` : `전부 (${repCount}개)`}
+              </p>
             </div>
             <div>
               <span className="text-emerald-600">공익직불제 추출 목표</span>
-              <p className="font-semibold text-emerald-900">{effectiveTarget}개 (= {config.totalTarget} - {repCount})</p>
+              <p className="font-semibold text-emerald-900">{config.publicPaymentTarget}개</p>
             </div>
-            <div>
-              <span className="text-emerald-600">총 목표</span>
-              <p className="font-semibold text-emerald-900">{config.totalTarget}개</p>
+          </div>
+
+          {/* 중복 안내 */}
+          {duplicates.count > 0 && (
+            <div className="mt-3 rounded-md bg-blue-50 border border-blue-200 px-3 py-2">
+              <div className="flex items-center gap-2 text-sm font-semibold text-blue-800">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                </svg>
+                중복 필지 {duplicates.count}건 (양쪽 모두 포함)
+              </div>
+              <p className="text-xs text-blue-700 mt-1">
+                대표필지와 공익직불제에 동일한 필지가 {duplicates.count}건 있습니다.
+                양쪽 모두 그대로 포함되며, 공익직불제는 목표 {config.publicPaymentTarget}개를 그대로 추출합니다.
+                중복 필지의 경영체 정보는 마스터 파일 기준으로 채워집니다.
+              </p>
             </div>
+          )}
+
+          {/* 제외 리 + 보충 안내 */}
+          <div className="mt-3 rounded-md bg-gray-50 border border-gray-200 px-3 py-2">
+            <p className="text-xs text-gray-600">
+              공익직불제에서 제외된 리(里)에 속한 대표필지도 동일하게 제외되며, 부족분은 마스터 파일에서 공익직불제와 동일 조건으로 보충됩니다.
+            </p>
           </div>
         </div>
       )}
