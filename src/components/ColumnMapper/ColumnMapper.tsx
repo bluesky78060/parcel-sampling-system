@@ -178,20 +178,32 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
   // 매칭은 PNU 또는 주소+필지번호로 하고, 경영체 정보는 추출 단계에서
   // 마스터 파일 기준으로 채워지므로 여기서 강제할 이유가 없다.
   const isRepresentative = fileConfig.role === 'representative';
-  const requiredKeys = isRepresentative ? ['address'] : ['farmerId', 'address'];
-  const isFieldRequired = (field: SystemField) =>
-    field.key === 'farmerId' ? !isRepresentative : field.required;
+
+  const has = (k: keyof ColumnMapping) => {
+    const v = mapping[k];
+    return typeof v === 'string' && v.trim() !== '';
+  };
+
+  // 지번 컬럼: 분리 모드면 본번, 통합 모드면 필지번호
+  const hasLotNumber = parcelIdMode === 'split' ? has('mainLotNum') : has('parcelId');
+
+  // 필지주소는 컬럼이 따로 없어도 된다. 분리 컬럼(읍면동·리·지번)이 있으면
+  // applyColumnMapping이 행마다 주소를 조립하고, PNU 생성도 분리 컬럼만 쓴다.
+  // 시도·시군구는 있으면 함께 조립되지만 필수는 아니다.
+  const canAssembleAddress = has('eubmyeondong') && has('ri') && hasLotNumber;
+  const addressOk = has('address') || canAssembleAddress;
+
+  const isFieldRequired = (field: SystemField) => {
+    if (field.key === 'farmerId') return !isRepresentative;
+    if (field.key === 'address') return !canAssembleAddress;
+    return field.required;
+  };
 
   const isRequiredMapped = (() => {
-    const baseOk = requiredKeys.every((f) => {
-      const val = mapping[f as keyof ColumnMapping];
-      return typeof val === 'string' && val.trim() !== '';
-    });
+    const farmerOk = isRepresentative || has('farmerId');
     // 필지번호: 분리면 mainLotNum 필수, 통합이면 parcelId 컬럼 또는 주소 자동추출 (항상 OK)
-    const parcelOk = parcelIdMode === 'split'
-      ? !!(mapping.mainLotNum && mapping.mainLotNum.trim())
-      : true; // 통합모드: 컬럼 있으면 사용, 없으면 주소에서 자동 추출
-    return baseOk && parcelOk;
+    const parcelOk = parcelIdMode === 'split' ? has('mainLotNum') : true;
+    return farmerOk && addressOk && parcelOk;
   })();
 
   const handleComplete = () => {
@@ -452,6 +464,14 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
                   {!isDisabled && value ? (
                     <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                       매핑됨
+                    </span>
+                  ) : field.key === 'address' && canAssembleAddress ? (
+                    // 필지주소 컬럼이 없어도 분리 컬럼으로 행마다 조립된다
+                    <span
+                      className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600"
+                      title="읍면동·리·지번 컬럼으로 주소를 자동 조립합니다"
+                    >
+                      자동 조립
                     </span>
                   ) : isFieldRequired(field) && !isDisabled ? (
                     <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-500">

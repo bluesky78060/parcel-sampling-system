@@ -159,12 +159,16 @@ export function applyColumnMapping(
         const v = String(row[mapping.ri] ?? '').trim();
         if (v) parts.push(v);
       }
-      // 본번/부번 추가
+      // 지번 추가 — 본번/부번이 분리돼 있으면 결합하고, 통합 필지번호면 그대로 쓴다.
+      // 지번이 빠지면 조립 주소가 리(里)에서 끝나 지오코딩이 리 중심점을 찍는다.
       const mainNum = mapping.mainLotNum ? String(row[mapping.mainLotNum] ?? '').trim() : '';
       const subNum = mapping.subLotNum ? String(row[mapping.subLotNum] ?? '').trim() : '';
       if (mainNum) {
         const lotStr = subNum && subNum !== '0' ? `${mainNum}-${subNum}` : mainNum;
         parts.push(lotStr);
+      } else if (mapping.parcelId) {
+        const lot = String(row[mapping.parcelId] ?? '').trim();
+        if (lot) parts.push(lot);
       }
       address = parts.join(' ');
     }
