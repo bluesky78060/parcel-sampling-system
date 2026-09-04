@@ -1,5 +1,5 @@
 import type { LatLng } from '../types';
-import { normalizeAddress } from './addressParser';
+import { normalizeAddress, normalizeAddressLotNumber } from './addressParser';
 import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
 import { jsonp } from './jsonp';
 
@@ -377,7 +377,11 @@ async function snapToPolygonCentroid(
 /**
  * 단일 주소를 좌표로 변환 (VWORLD 우선, Kakao 폴백)
  */
-export async function geocodeAddress(address: string): Promise<LatLng | null> {
+export async function geocodeAddress(rawAddress: string): Promise<LatLng | null> {
+  // 원본 파일에 따라 지번이 0으로 채워져 있다(운계리 0165-0001).
+  // VWORLD가 선행 0을 인식하지 못하므로 조회용으로만 정규화한다.
+  // (표시·엑셀에 나가는 주소는 원본 그대로 둔다)
+  const address = normalizeAddressLotNumber(rawAddress);
   const cacheKey = normalizeAddress(address);
 
   if (geocodeCache.has(cacheKey)) {
