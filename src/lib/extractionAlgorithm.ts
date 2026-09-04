@@ -117,15 +117,32 @@ function extractWithDensity(
 
   // 클러스터 정렬: 대표필지 좌표가 있으면 대표필지 근처 클러스터 우선
   if (repCoords && repCoords.length > 0) {
-    // 각 클러스터 → 대표필지까지의 최소 거리 계산
+    // 각 클러스터 → 대표필지까지의 최소 거리를 정렬 '전에' 1회만 계산한다.
+    // 비교자 안에서 계산하면 O(n log n · m)으로 같은 거리를 수없이 다시 재고,
+    // Math.min(...arr) 스프레드는 클러스터가 크면 스택을 넘긴다.
+    const minDistToRep = new Map<Parcel[], number>();
+    for (const cluster of clusters) {
+      let min = Infinity;
+      for (const p of cluster) {
+        if (!p.coords) continue;
+        for (const rc of repCoords) {
+          const d = haversineDistance(rc, p.coords);
+          if (d < min) min = d;
+        }
+      }
+      minDistToRep.set(cluster, min);
+    }
+    // 대표필지에 가까운 클러스터 우선.
+    // min은 Infinity로 시작해 `d < min`일 때만 갱신되고 `NaN < x`는 항상
+    // false이므로 min 자체는 NaN이 될 수 없다. 따라서 차가 NaN인 경우는
+    // Infinity - Infinity 하나뿐이고, 그것은 실제로 동순위다(양쪽 다 유효한
+    // 거리를 못 구한 클러스터). `|| 0`은 NaN을 덮는 눈가림이 아니라
+    // 참인 동순위를 표현하는 것이며, 이렇게 해야 비교자가 전순서를 이룬다.
     clusters.sort((a, b) => {
-      const minDistA = Math.min(...a.map(p =>
-        Math.min(...repCoords.map(rc => haversineDistance(rc, p.coords!)))
-      ));
-      const minDistB = Math.min(...b.map(p =>
-        Math.min(...repCoords.map(rc => haversineDistance(rc, p.coords!)))
-      ));
-      return minDistA - minDistB;  // 대표필지에 가까운 클러스터 우선
+      // 위에서 전 클러스터를 set했으므로 ?? 분기는 실제로는 미도달 — 타입 좁히기용
+      const da = minDistToRep.get(a) ?? Infinity;
+      const db = minDistToRep.get(b) ?? Infinity;
+      return (da - db) || 0;
     });
   } else {
     // 대표필지 없으면 큰 클러스터 우선
@@ -133,6 +150,15 @@ function extractWithDensity(
   }
 
   const selected: Parcel[] = [];
+
+  // 세 가중치는 클러스터와 무관한 상수다. 루프 안에 두면 클러스터마다
+  // 달라지는 값처럼 읽힌다.
+  // 주의: `densityShare`(밀집도 대 대표필지 근접도의 배분)와
+  // `spatialConfig.densityWeight`(점수 대 노이즈의 배분)는 이름만 비슷할 뿐
+  // 서로 다른 값이다.
+  const repWeight = repCoords && repCoords.length > 0 ? 0.6 : 0;
+  const densityShare = 1 - repWeight;
+  const noiseWeight = 1 - spatialConfig.densityWeight;
 
   for (const cluster of clusters) {
     if (selected.length >= target) break;
@@ -148,28 +174,44 @@ function extractWithDensity(
       if (!isConnected) continue;
     }
 
-    // 밀집도 + 대표필지 근접도 점수 계산
     const scored = cluster.map(p => {
       const density = calculateDensity(p, withCoords, maxDistKm);
       // 대표필지 좌표가 있으면 근접도 보너스 (가까울수록 높은 점수)
+      // 루프 형태라 NaN 거리는 건너뛴다. 구 Math.min(...)은 거리 하나만
+      // NaN이어도 전체가 NaN이 되어 그 필지의 점수가 통째로 오염됐다.
       let repProximity = 0;
       if (repCoords && repCoords.length > 0 && p.coords) {
-        const minRepDist = Math.min(...repCoords.map(rc => haversineDistance(rc, p.coords!)));
+        let minRepDist = Infinity;
+        for (const rc of repCoords) {
+          const d = haversineDistance(rc, p.coords);
+          if (d < minRepDist) minRepDist = d;
+        }
         repProximity = 1 / (minRepDist + 0.1);  // 0.1km 보정
       }
-      return { parcel: p, density, repProximity };
+      const score = repProximity * repWeight + density * densityShare;
+      // 점수와 노이즈를 미리 하나의 순위 키로 합친다.
+      // 진폭에 주의: 비교값에는 두 항목의 노이즈 '차'가 들어가므로,
+      // 예전 비교자(노이즈 1회, 범위 ±noiseWeight)와 폭을 맞추려면
+      // 항목별 노이즈를 절반 폭으로 뽑아야 한다.
+      //
+      // 지켜야 하는 것은 표준편차가 아니라 '지지집합'이다. 이 범위가
+      // "점수 격차가 noiseWeight를 넘으면 노이즈로는 순위가 뒤집히지 않는다"는
+      // 경계를 정하고, 그것이 densityWeight 슬라이더의 실질적 의미다.
+      // `* 2`를 쓰면 격차가 noiseWeight를 넘는 쌍도 25% 확률로 뒤집혀
+      // 구 코드에 없던 동작이 생긴다.
+      //
+      // 대가로 표준편차는 1/√2배(≈0.71배)가 된다(기본값 0.7에서 0.173→0.123).
+      // 범위와 표준편차를 동시에 맞출 수는 없다 — i.i.d. 노이즈의 차는
+      // 특성함수가 |φ(t)|² ≥ 0이라 음수 구간을 갖는 균등분포가 될 수 없다.
+      // 원리적으로 불가능하므로 다시 시도하지 말 것.
+      const rank = score * spatialConfig.densityWeight
+        + (rng() - 0.5) * noiseWeight;
+      return { parcel: p, rank };
     });
 
-    // 정렬: 대표필지 근접도 + 밀집도 결합
-    scored.sort((a, b) => {
-      const repWeight = repCoords && repCoords.length > 0 ? 0.6 : 0;
-      const densityWeight = 1 - repWeight;
-      const scoreA = a.repProximity * repWeight + a.density * densityWeight;
-      const scoreB = b.repProximity * repWeight + b.density * densityWeight;
-      const scoreDiff = scoreB - scoreA;
-      const randomFactor = (rng() - 0.5) * 2 * (1 - spatialConfig.densityWeight);
-      return scoreDiff * spatialConfig.densityWeight + randomFactor;
-    });
+    // 정렬: 순위 키 내림차순 (순수 비교자 — 정렬 계약을 지키므로
+    // 결과 순서가 엔진 구현과 무관하게 점수의 함수가 된다)
+    scored.sort((a, b) => b.rank - a.rank);
 
     for (const { parcel } of scored) {
       if (selected.length >= target) break;
