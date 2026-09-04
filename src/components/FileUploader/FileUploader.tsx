@@ -23,25 +23,36 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
   const [selectedSheet, setSelectedSheet] = useState('');
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 진행 중인 파싱 요청 식별자. 시트를 연달아 바꾸거나 파싱 중 파일을 제거하면
+  // 늦게 도착한 이전 결과가 최신 상태를 덮어쓸 수 있어, 최신 요청만 반영한다.
+  const requestIdRef = useRef(0);
+  // 마지막으로 성공적으로 로드된 시트 (파싱 실패 시 선택값을 되돌리는 기준)
+  const loadedSheetRef = useRef('');
 
   const uploadedFile = files.find((f) => f.id === slotId) ?? null;
 
   const processFile = useCallback(async (file: File, sheetName?: string) => {
+    const requestId = ++requestIdRef.current;
+    const isStale = () => requestId !== requestIdRef.current;
+
     setIsLoading(true);
     setError(null);
     try {
       const sheetNames = await getSheetNames(file);
+      if (isStale()) return;
       const targetSheet = sheetName ?? sheetNames[0];
 
-      if (sheetNames.length > 1 && !sheetName) {
-        setSheets(sheetNames);
-        setSelectedSheet(sheetNames[0]);
-        setPendingFile(file);
-        setIsLoading(false);
-        return;
-      }
-
+      // 시트가 여러 개면 선택 UI를 띄우되, 기본 시트로 곧바로 로드한다.
+      // (선택을 기다렸다 등록하면, 기본값과 같은 시트를 고를 때 select의 change가
+      //  발생하지 않아 파일을 등록할 방법이 없어진다)
       const { headers, rows } = await parseExcelFile(file, targetSheet);
+      if (isStale()) return;
+
+      const isMultiSheet = sheetNames.length > 1;
+      setSheets(isMultiSheet ? sheetNames : []);
+      setSelectedSheet(isMultiSheet ? targetSheet : '');
+      setPendingFile(isMultiSheet ? file : null);
+      loadedSheetRef.current = isMultiSheet ? targetSheet : '';
 
       const fileConfig: FileConfig = {
         id: slotId,
@@ -61,13 +72,13 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
       } else {
         addFile(fileConfig);
       }
-
-      setSheets([]);
-      setPendingFile(null);
     } catch (err) {
+      if (isStale()) return;
       setError(err instanceof Error ? err.message : '파일 파싱 중 오류가 발생했습니다.');
+      // 실패한 시트가 선택된 채로 남지 않도록 마지막 성공 시트로 되돌린다
+      setSelectedSheet(loadedSheetRef.current);
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, [slotId, defaultYear, defaultRole, files, addFile, updateFile]);
 
@@ -108,10 +119,15 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
   };
 
   const handleRemove = () => {
+    // 진행 중인 파싱 결과가 제거 후에 되살아나지 않도록 무효화한다
+    requestIdRef.current++;
+    loadedSheetRef.current = '';
     removeFile(slotId);
     setSheets([]);
+    setSelectedSheet('');
     setPendingFile(null);
     setError(null);
+    setIsLoading(false);
   };
 
   if (uploadedFile) {
@@ -122,6 +138,14 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
           {required && <span className="ml-1 text-red-500">*</span>}
         </p>
         <FileCard fileConfig={uploadedFile} onRemove={handleRemove} />
+        {/* 다중 시트 파일은 등록 후에도 시트를 바꿀 수 있어야 한다 */}
+        <SheetSelector
+          sheets={sheets}
+          selected={selectedSheet}
+          onChange={handleSheetChange}
+        />
+        {isLoading && <p className="text-xs text-gray-500">시트를 다시 읽는 중...</p>}
+        {error && <p className="text-xs text-red-600">{error}</p>}
       </div>
     );
   }
