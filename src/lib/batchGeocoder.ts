@@ -1,6 +1,6 @@
 import type { Parcel } from '../types';
 import { geocodeAddress, isGeocodingAvailable, warmupCache, prefetchRegionalPolygons, getSnappedCoord, RateLimitError } from './kakaoGeocoder';
-import { normalizeAddress } from './addressParser';
+import { normalizeAddress, normalizeAddressLotNumber } from './addressParser';
 import { bulkSetToIDB } from './geocodeCache';
 
 export interface BatchGeocodingOptions {
@@ -67,7 +67,8 @@ export async function batchGeocode(
 
   for (const idx of needsGeocode) {
     const parcel = parcels[idx];
-    const key = normalizeAddress(parcel.address);
+    // geocodeAddress와 같은 기준으로 묶어야 0패딩 표기 차이가 중복 호출로 새지 않는다
+    const key = normalizeAddress(normalizeAddressLotNumber(parcel.address));
 
     const existing = addressDedupMap.get(key);
     if (existing) {
@@ -152,7 +153,7 @@ export async function batchGeocode(
 
         // IndexedDB 저장 버퍼
         if (coords) {
-          const cacheKey = normalizeAddress(parcel.address);
+          const cacheKey = normalizeAddress(normalizeAddressLotNumber(parcel.address));
           idbWriteBuffer.push({ key: cacheKey, coord: coords });
           if (itemElapsed < 5) chunkCached++;
           else chunkSuccess++;

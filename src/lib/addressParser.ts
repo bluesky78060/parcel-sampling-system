@@ -38,6 +38,34 @@ export function parseSido(address: string): string {
 }
 
 /**
+ * 주소 끝의 지번을 지오코딩이 인식하는 형태로 정규화한다.
+ *
+ * 일부 원본 파일은 지번을 0으로 채워 내보낸다(`운계리 0165-0001`).
+ * VWORLD는 선행 0이 붙은 본번을 인식하지 못해 NOT_FOUND를 돌려준다.
+ *   경상북도 봉화군 상운면 운계리 0165-00   → NOT_FOUND
+ *   경상북도 봉화군 상운면 운계리 165       → OK
+ *
+ * 주소 **끝의 지번 토큰만** 바꾼다. 문자열 전체를 훑으면 건물명이나 도로명에
+ * 섞인 숫자까지 훼손된다. 부번이 전부 0이면 buildParcelId와 같은 규칙으로 뗀다.
+ *
+ * 예) '… 운계리 0165-0001' → '… 운계리 165-1'
+ *     '… 운계리 0165-00'   → '… 운계리 165'
+ *     '… 적덕리 산 0056'   → '… 적덕리 산 56'
+ *     '… 문단리 1043-2'    → 그대로
+ */
+export function normalizeAddressLotNumber(address: string): string {
+  return address.replace(
+    /(\s)(산\s?)?0*(\d+)(?:-0*(\d+))?\s*$/,
+    (_m, space: string, san: string | undefined, main: string, sub: string | undefined) => {
+      const sanPart = san ?? '';
+      const subNum = sub ? parseInt(sub, 10) : 0;
+      const lot = subNum > 0 ? `${parseInt(main, 10)}-${subNum}` : `${parseInt(main, 10)}`;
+      return `${space}${sanPart}${lot}`;
+    },
+  );
+}
+
+/**
  * 주소 정규화 (비교용)
  * - 공백 제거
  * - 특수문자 제거
