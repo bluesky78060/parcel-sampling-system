@@ -214,6 +214,15 @@ function extractWithDensityOrShuffle(
 }
 
 /**
+ * 필지가 대표필지 키 셋에 해당하는지 판정
+ * 경영체번호가 비어 있으면 `_필지번호` 형태의 키가 서로 충돌하므로 그 키는 쓰지 않는다.
+ */
+function matchesRepKeys(p: Parcel, repKeys: Set<string>): boolean {
+  if (repKeys.has(p.pnu || `${p.address}__${p.parcelId}`)) return true;
+  return !!p.farmerId && repKeys.has(`${p.farmerId}_${p.parcelId}`);
+}
+
+/**
  * 리(里)에서 농가 제한을 적용하여 필지 추출
  * - 공간 필터 활성화 시: 리 내부에서 대표필지 근처 밀집 필지 우선
  * - 비활성화 시: 단순 랜덤 셔플
@@ -235,14 +244,8 @@ function extractFromRi(
   for (const farmerParcels of Object.values(farmerGroups)) {
     if (repKeys && repKeys.size > 0) {
       // 대표필지를 앞에, 나머지를 뒤에 배치하여 maxPerFarmer 슬라이스 시 대표필지 우선
-      const repFirst = farmerParcels.filter(p =>
-        repKeys.has(p.pnu || `${p.address}__${p.parcelId}`) ||
-        repKeys.has(`${p.farmerId}_${p.parcelId}`)
-      );
-      const rest = farmerParcels.filter(p =>
-        !repKeys.has(p.pnu || `${p.address}__${p.parcelId}`) &&
-        !repKeys.has(`${p.farmerId}_${p.parcelId}`)
-      );
+      const repFirst = farmerParcels.filter(p => matchesRepKeys(p, repKeys));
+      const rest = farmerParcels.filter(p => !matchesRepKeys(p, repKeys));
       pool.push(...[...repFirst, ...shuffle(rest, rng)].slice(0, config.maxPerFarmer));
     } else {
       const shuffled = shuffle(farmerParcels, rng);
@@ -255,9 +258,7 @@ function extractFromRi(
   const remaining: Parcel[] = [];
   if (repKeys && repKeys.size > 0) {
     for (const p of pool) {
-      const isRep = repKeys.has(p.pnu || `${p.address}__${p.parcelId}`) ||
-        repKeys.has(`${p.farmerId}_${p.parcelId}`);
-      if (isRep) {
+      if (matchesRepKeys(p, repKeys)) {
         prioritized.push(p);
       } else {
         remaining.push(p);
