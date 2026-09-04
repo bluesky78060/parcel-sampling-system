@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
-import { useExtractionStore } from '../store/extractionStore';
+import { useExtractionStore, dedupeSelected } from '../store/extractionStore';
 import { useFileStore } from '../store/fileStore';
 import { exportToExcel } from '../lib/excelExporter';
 
@@ -18,6 +18,21 @@ export function ExportPage() {
     }
   }, [result, navigate]);
 
+  // 공익직불제 ↔ 대표필지 중복 키 계산
+  const duplicateKeys = useMemo(() => {
+    const repKeys = new Set<string>();
+    for (const p of representativeParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key) repKeys.add(key);
+    }
+    const dupKeys = new Set<string>();
+    for (const p of allParcels) {
+      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      if (key && repKeys.has(key)) dupKeys.add(key);
+    }
+    return dupKeys;
+  }, [allParcels, representativeParcels]);
+
   if (!result) return null;
 
   const { selectedParcels, riStats, farmerStats, validation } = result;
@@ -27,8 +42,11 @@ export function ExportPage() {
   const excludedParcels = allParcels.filter((p) => p.sampledYears.length > 0);
 
   // 추출 결과 요약
-  const totalSelected = selectedParcels.length;
-  const uniqueRiCount = new Set(selectedParcels.map((p) => p.ri)).size;
+  // 공익직불제 ↔ 대표필지 겹침을 1건으로 접은 뒤 집계 (ExtractPage·ReviewPage와 동일 기준)
+  // 분자(총 선택)와 분모(리 수)를 같은 배열에서 뽑아야 평균이 왜곡되지 않는다
+  const uniqueSelected = dedupeSelected(selectedParcels);
+  const totalSelected = uniqueSelected.length;
+  const uniqueRiCount = new Set(uniqueSelected.map((p) => p.ri)).size;
   const avgPerRi = uniqueRiCount > 0 ? (totalSelected / uniqueRiCount).toFixed(1) : '0';
   const warningCount = validation.warnings.length;
   const hasErrors = validation.errors.length > 0;
@@ -47,21 +65,6 @@ export function ExportPage() {
   const repCount = selectedParcels.filter(
     (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
   ).length;
-
-  // 공익직불제 ↔ 대표필지 중복 키 계산
-  const duplicateKeys = useMemo(() => {
-    const repKeys = new Set<string>();
-    for (const p of representativeParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
-      if (key) repKeys.add(key);
-    }
-    const dupKeys = new Set<string>();
-    for (const p of allParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
-      if (key && repKeys.has(key)) dupKeys.add(key);
-    }
-    return dupKeys;
-  }, [allParcels, representativeParcels]);
 
   const handleExport = () => {
     setExportError(null);
