@@ -40,10 +40,20 @@ export function FileCard({ fileConfig, onRemove }: FileCardProps) {
           <span className="text-xs text-gray-400">
             {fileConfig.rowCount.toLocaleString()}행
           </span>
-          {fileConfig.sheetName && (
-            <span className="text-xs text-gray-300">
-              · {fileConfig.sheetName}
+          {/* 여러 시트를 합쳐 로드한 경우 출처를 모두 보여준다 */}
+          {(fileConfig.sheetNames?.length ?? 0) > 1 ? (
+            <span
+              className="text-xs text-indigo-500 truncate"
+              title={fileConfig.sheetNames!.join(' + ')}
+            >
+              · {fileConfig.sheetNames!.join(' + ')}
             </span>
+          ) : (
+            fileConfig.sheetName && (
+              <span className="text-xs text-gray-300">
+                · {fileConfig.sheetName}
+              </span>
+            )
           )}
         </div>
       </div>
