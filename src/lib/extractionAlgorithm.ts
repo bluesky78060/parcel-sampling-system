@@ -424,8 +424,11 @@ export function extractParcels(
     const useSpatialFilter = config.spatialConfig?.enableSpatialFilter ?? false;
     const maxDistKm = config.spatialConfig?.maxParcelDistanceKm ?? Infinity;
 
-    const selectedKeySet = new Set(selected.map(p => `${p.farmerId}_${p.parcelId}`));
-    const remaining = candidates.filter(p => !selectedKeySet.has(`${p.farmerId}_${p.parcelId}`));
+    // `farmerId_parcelId`는 고유하지 않다. 같은 농가가 같은 지번을 작물별로
+    // 여러 행 등록하면, 그중 하나만 선택돼도 나머지 행이 전부 보충 후보에서
+    // 빠진다. 이 시점의 selected는 아직 원본 참조이므로 참조로 거른다.
+    const selectedSet = new Set(selected);
+    const remaining = candidates.filter(p => !selectedSet.has(p));
 
     const remainingByRi = groupBy(remaining, p => p.ri);
     // 보충 시 대표필지 중심에 가까운 리부터 우선
@@ -672,9 +675,9 @@ function applyLandCategoryRatios(
     selectedByCategory[cat].push(p);
   }
 
-  // 선택되지 않은 후보 필지
-  const selectedKeySet = new Set(selected.map(p => `${p.farmerId}_${p.parcelId}`));
-  const remaining = candidates.filter(p => !selectedKeySet.has(`${p.farmerId}_${p.parcelId}`));
+  // 선택되지 않은 후보 필지 (지번은 고유하지 않으므로 참조로 거른다)
+  const selectedSet = new Set(selected);
+  const remaining = candidates.filter(p => !selectedSet.has(p));
   const remainingByCategory: Record<string, Parcel[]> = {};
   for (const p of remaining) {
     const cat = getActualLandCategory(p);
@@ -703,16 +706,17 @@ function applyLandCategoryRatios(
   }
 
   // selected 배열 재구성 (초과분 제거)
-  const keptKeys = new Set<string>();
+  // 참조로 담는다. `farmerId_parcelId`를 쓰면 같은 키를 가진 다른 행이 유지
+  // 대상에 있을 때 초과분이 제거되지 않아 지목 비율이 설정대로 맞지 않는다.
+  const kept = new Set<Parcel>();
   for (const parcels of Object.values(selectedByCategory)) {
-    for (const p of parcels) keptKeys.add(`${p.farmerId}_${p.parcelId}`);
+    for (const p of parcels) kept.add(p);
   }
 
   // selected 배열에서 초과분 제거
   let i = selected.length;
   while (i--) {
-    const key = `${selected[i].farmerId}_${selected[i].parcelId}`;
-    if (!keptKeys.has(key)) {
+    if (!kept.has(selected[i])) {
       selected.splice(i, 1);
     }
   }
@@ -730,10 +734,9 @@ function applyLandCategoryRatios(
       let added = 0;
       for (let j = 0; j < shuffled.length && added < need; j++) {
         const p = shuffled[j];
-        const key = `${p.farmerId}_${p.parcelId}`;
-        if (!keptKeys.has(key)) {
+        if (!kept.has(p)) {
           selected.push(p);
-          keptKeys.add(key);
+          kept.add(p);
           added++;
         }
       }

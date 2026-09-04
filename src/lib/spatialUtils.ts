@@ -42,10 +42,14 @@ export function calculateCentroid(parcels: Parcel[]): LatLng | null {
 
 /**
  * 한 필지 주변 반경 내 이웃 필지 수로 밀집도 점수 계산
- * @param parcel 대상 필지
+ *
+ * @param parcel 대상 필지. **`allParcels` 안에 참조로 존재해야 한다** —
+ *   자기 자신 제외를 값이 아니라 참조로 판정하므로, 복사본을 넘기면 원본이
+ *   거리 0의 이웃으로 세어져 점수가 부풀어 오른다.
  * @param allParcels 전체 필지 (좌표 있는 것만)
  * @param radiusKm 반경 (기본 1km)
- * @returns 0~1 정규화된 밀집도 점수
+ * @returns 0~1 값이지만 분모가 이 호출의 풀 크기라 **같은 호출 안에서만**
+ *   비교 가능한 상대 밀집도다. 리가 다르거나 호출이 다르면 척도가 다르다.
  */
 export function calculateDensity(
   parcel: Parcel,
@@ -54,8 +58,11 @@ export function calculateDensity(
 ): number {
   if (parcel.coords == null) return 0;
 
+  // 자기 자신만 제외한다. 예전에는 parcelId로 비교했는데 지번은 고유하지 않아
+  // (실데이터 기준 같은 리 안에서만 4,774종이 중복, 한 지번이 최대 12행)
+  // 같은 지번을 가진 다른 필지까지 이웃에서 빠져 밀집도가 과소 계산됐다.
   const coordParcels = allParcels.filter(
-    (p) => p.coords != null && p.parcelId !== parcel.parcelId,
+    (p) => p.coords != null && p !== parcel,
   );
 
   if (coordParcels.length === 0) return 0;
@@ -112,14 +119,20 @@ export function clusterParcelsInRi(parcels: Parcel[], maxDistKm = 0.5): Parcel[]
 
   if (coordParcels.length === 0) return [];
 
-  const visited = new Set<string>();
+  // 방문 표시는 필지 객체 참조로 한다. 예전에는 parcelId(지번)를 키로 썼는데
+  // 지번은 고유하지 않다 — 실데이터(39,859건) 기준 같은 리 안에서만 4,774종이
+  // 중복되고 한 지번이 최대 12행까지 나온다(공유 필지, 작물별 등록 등).
+  // 그러면 같은 지번의 다른 필지가 시드로도 이웃으로도 선택되지 못해
+  // 클러스터에서 통째로 빠지고, 그만큼 추출 후보에서 사라진다.
+  // 참조 비교면 충돌이 원천적으로 없다.
+  const visited = new Set<Parcel>();
   const clusters: Parcel[][] = [];
 
   for (const parcel of coordParcels) {
-    if (visited.has(parcel.parcelId)) continue;
+    if (visited.has(parcel)) continue;
 
     const cluster: Parcel[] = [parcel];
-    visited.add(parcel.parcelId);
+    visited.add(parcel);
 
     // BFS로 가까운 필지 탐색
     const queue: Parcel[] = [parcel];
@@ -129,13 +142,16 @@ export function clusterParcelsInRi(parcels: Parcel[], maxDistKm = 0.5): Parcel[]
 
       const neighbors = coordParcels.filter(
         (p) =>
-          !visited.has(p.parcelId) &&
+          !visited.has(p) &&
           p.ri === current.ri &&
           haversineDistance(current.coords!, p.coords!) <= maxDistKm,
       );
 
       for (const neighbor of neighbors) {
-        visited.add(neighbor.parcelId);
+        // neighbors는 필터 시점의 스냅샷이다. 같은 참조가 배열에 두 번 있으면
+        // 한 객체가 클러스터에 중복으로 들어가므로 배치 안에서 다시 확인한다.
+        if (visited.has(neighbor)) continue;
+        visited.add(neighbor);
         cluster.push(neighbor);
         queue.push(neighbor);
       }
