@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { jsonp } from '../lib/jsonp';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { computePolygonCentroid } from '../lib/kakaoGeocoder';
@@ -113,22 +114,20 @@ export function usePolygonLayer({
       try {
         const results = await Promise.all(
           layers.map(async (layer) => {
-            const params = new URLSearchParams({
-              service: 'data',
-              request: 'GetFeature',
-              data: layer,
-              key: vworldKey!,
-              format: 'json',
-              geometry: 'true',
-              crs: 'EPSG:4326',
-              geomFilter,
-              size: '1000',
-            });
             try {
-              const res = await fetch(`${VWORLD_DATA_URL}?${params}`);
-              if (!res.ok) return [];
-              const data = await res.json();
-              return data.response?.result?.featureCollection?.features ?? [];
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const data = await jsonp<any>(VWORLD_DATA_URL, {
+                service: 'data',
+                request: 'GetFeature',
+                data: layer,
+                key: vworldKey!,
+                format: 'json',
+                geometry: 'true',
+                crs: 'EPSG:4326',
+                geomFilter,
+                size: '1000',
+              });
+              return data?.response?.result?.featureCollection?.features ?? [];
             } catch {
               return [];
             }

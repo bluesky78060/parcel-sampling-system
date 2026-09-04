@@ -1,6 +1,7 @@
 import type { LatLng } from '../types';
 import { normalizeAddress } from './addressParser';
 import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
+import { jsonp } from './jsonp';
 
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
@@ -45,13 +46,30 @@ const KAKAO_KEYWORD_URL = '/api/kakao/v2/local/search/keyword.json';
 // Kakao REST 사용 가능 여부 판정은 이 상수 한 곳에서만 한다.
 const KAKAO_REST_USABLE = isDev && !!import.meta.env.VITE_KAKAO_REST_KEY;
 
-// VWORLD API (국토교통부) — CORS 허용되므로 프로덕션에서도 직접 호출 가능
-const VWORLD_GEOCODE_URL = isDev
-  ? '/api/vworld/req/address'
-  : 'https://api.vworld.kr/req/address';
-const VWORLD_DATA_URL = isDev
-  ? '/api/vworld/req/data'
-  : 'https://api.vworld.kr/req/data';
+// VWORLD API (국토교통부)
+// 주의: VWORLD는 Access-Control-Allow-Origin 헤더를 보내지 않는다. fetch로 부르면
+// 서버는 200 OK를 주지만 브라우저가 응답을 차단한다(타일·WMS는 <img>라서 무관).
+// VWORLD가 callback 파라미터로 JSONP를 지원하므로 데이터 조회는 전부 jsonp()로 한다.
+// dev/prod 모두 같은 경로를 쓰므로 vite 프록시에 의존하지 않는다.
+const VWORLD_GEOCODE_URL = 'https://api.vworld.kr/req/address';
+const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
+
+/** VWORLD 응답 공통 형태 */
+interface VworldResponse {
+  response?: {
+    status?: string;
+    error?: { code?: string; text?: string };
+    result?: { point?: { x: string; y: string }; featureCollection?: { features?: unknown[] } };
+  };
+}
+
+/** 쿼터 초과·과다요청 계열 오류 코드 판정 (JSONP는 HTTP 상태를 볼 수 없다) */
+function isRateLimited(err?: { code?: string; text?: string }): boolean {
+  const code = (err?.code ?? '').toUpperCase();
+  const text = err?.text ?? '';
+  return code.includes('QUOTA') || code.includes('LIMIT') || code.includes('OVER')
+    || text.includes('초과') || text.includes('제한');
+}
 
 /**
  * IndexedDB에서 메모리 캐시로 워밍업 (배치 시작 전 호출)
@@ -153,6 +171,7 @@ function getPnuLayers(pnu: string): string[] {
     : ['LP_PA_CBND_BUBUN', 'LP_PA_CBND_BONBUN'];
 }
 
+/** @deprecated 호출처 없음. 되살리려면 fetch를 jsonp()로 바꿔야 한다 (VWORLD는 CORS 미허용). */
 /**
  * PNU 코드로 좌표 변환 (VWORLD 연속지적도 API)
  * 봉화군 PNU만 처리 (47920 접두사)
@@ -282,6 +301,7 @@ export async function geocodeParcel(address: string, pnu?: string): Promise<LatL
   return approxCoord;
 }
 
+/** @deprecated geocodeParcel에서만 쓰였고 그것도 호출처가 없다. 되살리려면 jsonp() 필요. */
 /**
  * 지오코딩된 좌표를 폴리곤 중심점으로 스냅
  * - 대략적 좌표 주변 소형 BOX로 연속지적도 폴리곤 조회
@@ -394,90 +414,46 @@ export async function geocodeAddress(address: string): Promise<LatLng | null> {
  * - 지번 주소 검색 → 도로명 주소 검색 순서
  */
 async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | null> {
-  // 1. 지번 주소 검색
-  try {
-    const t1 = Date.now();
-    const params = new URLSearchParams({
-      service: 'address',
-      request: 'getcoord',
-      version: '2.0',
-      crs: 'epsg:4326',
-      address: address,
-      format: 'json',
-      type: 'parcel',
-      key: apiKey,
-    });
+  // 지번 → 도로명 순으로 시도한다
+  for (const type of ['parcel', 'road'] as const) {
+    const label = type === 'parcel' ? '지번' : '도로명';
+    const t0 = Date.now();
+    try {
+      const data = await jsonp<VworldResponse>(VWORLD_GEOCODE_URL, {
+        service: 'address',
+        request: 'getcoord',
+        version: '2.0',
+        crs: 'epsg:4326',
+        address,
+        format: 'json',
+        type,
+        key: apiKey,
+      });
+      const elapsed = Date.now() - t0;
+      const res = data.response;
 
-    const res = await fetch(`${VWORLD_GEOCODE_URL}?${params}`);
-    const e1 = Date.now() - t1;
-
-    if (res.status === 429) {
-      console.warn(`  ⏳ VWORLD 지번 429 (${e1}ms): ${address}`);
-      throw new RateLimitError('vworld');
-    }
-    if (res.status === 401 || res.status === 403) {
-      console.warn('[vworld] API 키 인증 실패:', res.status);
-      return null;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.response?.status === 'OK' && data.response?.result?.point) {
-        const point = data.response.result.point;
-        if (e1 > 500) console.info(`  🐢 VWORLD 지번 느림 (${e1}ms): ${address}`);
-        return {
-          lat: parseFloat(point.y),
-          lng: parseFloat(point.x),
-        };
+      if (res?.status === 'ERROR') {
+        if (isRateLimited(res.error)) {
+          console.warn(`  ⏳ VWORLD ${label} 쿼터 초과 (${elapsed}ms): ${res.error?.text ?? ''}`);
+          throw new RateLimitError('vworld');
+        }
+        console.warn(`[vworld] ${label} 오류: ${res.error?.code ?? ''} ${res.error?.text ?? ''}`);
+        // 인증키 문제라면 도로명으로 재시도해도 같은 결과다
+        if ((res.error?.code ?? '').toUpperCase().includes('KEY')) return null;
+        continue;
       }
-    }
-    if (e1 > 500) console.info(`  △ VWORLD 지번 결과없음 (${e1}ms): ${address}`);
-  } catch (err) {
-    if (err instanceof RateLimitError) throw err;
-    console.warn('[vworld] 지번 검색 오류:', err);
-  }
 
-  // 2. 도로명 주소 검색
-  try {
-    const t2 = Date.now();
-    const params = new URLSearchParams({
-      service: 'address',
-      request: 'getcoord',
-      version: '2.0',
-      crs: 'epsg:4326',
-      address: address,
-      format: 'json',
-      type: 'road',
-      key: apiKey,
-    });
-
-    const res = await fetch(`${VWORLD_GEOCODE_URL}?${params}`);
-    const e2 = Date.now() - t2;
-
-    if (res.status === 429) {
-      console.warn(`  ⏳ VWORLD 도로명 429 (${e2}ms): ${address}`);
-      throw new RateLimitError('vworld');
-    }
-    if (res.status === 401 || res.status === 403) {
-      console.warn('[vworld] API 키 인증 실패:', res.status);
-      return null;
-    }
-
-    if (res.ok) {
-      const data = await res.json();
-      if (data.response?.status === 'OK' && data.response?.result?.point) {
-        const point = data.response.result.point;
-        if (e2 > 500) console.info(`  🐢 VWORLD 도로명 느림 (${e2}ms): ${address}`);
-        return {
-          lat: parseFloat(point.y),
-          lng: parseFloat(point.x),
-        };
+      const point = res?.result?.point;
+      if (res?.status === 'OK' && point) {
+        if (elapsed > 500) console.info(`  🐢 VWORLD ${label} 느림 (${elapsed}ms): ${address}`);
+        return { lat: parseFloat(point.y), lng: parseFloat(point.x) };
       }
+      if (elapsed > 500) console.info(`  △ VWORLD ${label} 결과없음 (${elapsed}ms): ${address}`);
+    } catch (err) {
+      if (err instanceof RateLimitError) throw err;
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      console.warn(`[vworld] ${label} 검색 오류:`, err);
     }
-    if (e2 > 500) console.info(`  △ VWORLD 도로명 결과없음 (${e2}ms): ${address}`);
-  } catch (err) {
-    if (err instanceof RateLimitError) throw err;
-    console.warn('[vworld] 도로명 검색 오류:', err);
   }
 
   return null;
@@ -656,7 +632,9 @@ export async function prefetchRegionalPolygons(
           let hasMore = true;
 
           while (hasMore && neededPnus.size > 0) {
-            const params = new URLSearchParams({
+            if (options?.signal?.aborted) break;
+
+            const data = await jsonp<VworldResponse>(VWORLD_DATA_URL, {
               service: 'data',
               request: 'GetFeature',
               data: layer,
@@ -667,14 +645,14 @@ export async function prefetchRegionalPolygons(
               geomFilter,
               size: '1000',
               page: String(page),
-            });
+            }, { signal: options?.signal });
 
-            const res = await fetch(`${VWORLD_DATA_URL}?${params}`);
-            if (!res.ok) break;
-
-            const data = await res.json();
+            if (data.response?.status === 'ERROR') {
+              console.warn(`[vworld] 폴리곤 조회 오류(${ri}/${layer}):`, data.response.error?.text ?? '');
+              break;
+            }
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const features: any[] = data.response?.result?.featureCollection?.features ?? [];
+            const features: any[] = (data.response?.result?.featureCollection?.features ?? []) as any[];
             if (features.length === 0) break;
 
             for (const feature of features) {
