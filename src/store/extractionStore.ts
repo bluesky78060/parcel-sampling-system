@@ -6,6 +6,13 @@ import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 /** 필지 매칭 키: PNU 또는 주소+필지번호 (excelExporter.getParcelKey와 동일 공식) */
 const matchKey = (p: Parcel) => p.pnu || `${p.address}__${p.parcelId}`;
 
+/**
+ * 경영체번호 기반 보조 키. 대표필지 파일에는 경영체번호가 없을 수 있는데,
+ * 빈 값끼리 매칭시키면 무관한 필지가 같은 필지로 취급되므로 키 자체를 만들지 않는다.
+ */
+const farmerKey = (p: Parcel): string | null =>
+  p.farmerId ? `${p.farmerId}_${p.parcelId}` : null;
+
 /** 결과 배열에서 겹치는 필지를 1건으로 접은 배열 (공익직불제 행을 우선 보존) */
 export function dedupeSelected(parcels: Parcel[]): Parcel[] {
   const seen = new Set<string>();
@@ -181,15 +188,20 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       const masterByFarmerKey = new Map<string, Parcel>();
       for (const p of allParcels) {
         masterByKey.set(matchKey(p), p);
-        masterByFarmerKey.set(`${p.farmerId}_${p.parcelId}`, p);
+        const fk = farmerKey(p);
+        if (fk) masterByFarmerKey.set(fk, p);
       }
 
       let enrichedCount = 0;
       const enrichedEligibleRep = eligibleRep.map(rep => {
+        const repFk = farmerKey(rep);
         const pub = masterByKey.get(matchKey(rep))
-          || masterByFarmerKey.get(`${rep.farmerId}_${rep.parcelId}`)
-          || allParcels.find(p => p.farmerId === rep.farmerId && p.parcelId === rep.parcelId)
-          || allParcels.find(p => p.farmerId === rep.farmerId);
+          // 경영체번호가 없으면 PNU/주소 매칭만 쓴다 — 빈 값 폴백은 오매칭을 부른다
+          || (repFk ? masterByFarmerKey.get(repFk) : undefined)
+          || (rep.farmerId
+            ? allParcels.find(p => p.farmerId === rep.farmerId && p.parcelId === rep.parcelId)
+              || allParcels.find(p => p.farmerId === rep.farmerId)
+            : undefined);
 
         if (!pub) return rep;
 
@@ -247,7 +259,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       const repParcelKeys = new Set<string>();
       for (const p of enrichedEligibleRep) {
         repParcelKeys.add(matchKey(p));
-        repParcelKeys.add(`${p.farmerId}_${p.parcelId}`);
+        const fk = farmerKey(p);
+        if (fk) repParcelKeys.add(fk);
       }
 
       // ── 2. 공익직불제 추출 (대표필지 근처 우선) ──
@@ -267,18 +280,22 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       // ── 3. 적격 대표필지를 결과에 직접 추가 (공익직불제와 중복되면 태깅만) ──
       const selectedKeySet = new Set(result.selectedParcels.map(matchKey));
-      const selectedFarmerKeySet = new Set(result.selectedParcels.map(p => `${p.farmerId}_${p.parcelId}`));
+      const selectedFarmerKeySet = new Set(
+        result.selectedParcels.map(farmerKey).filter((k): k is string => k !== null)
+      );
 
       // 공익직불제 추출 결과는 그대로 유지 (카테고리 변경 없음) — 대표필지와 겹치는 건수만 집계
       const taggedPublic = result.selectedParcels;
-      const repInPublicCount = taggedPublic.filter(p =>
-        repParcelKeys.has(matchKey(p)) || repParcelKeys.has(`${p.farmerId}_${p.parcelId}`)
-      ).length;
+      const repInPublicCount = taggedPublic.filter(p => {
+        const fk = farmerKey(p);
+        return repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
+      }).length;
 
       // 공익직불제에 포함되지 않은 적격 대표필지 → 대표필지로 직접 추가
-      const repNotInPublic = enrichedEligibleRep.filter(p =>
-        !selectedKeySet.has(matchKey(p)) && !selectedFarmerKeySet.has(`${p.farmerId}_${p.parcelId}`)
-      );
+      const repNotInPublic = enrichedEligibleRep.filter(p => {
+        const fk = farmerKey(p);
+        return !selectedKeySet.has(matchKey(p)) && !(fk !== null && selectedFarmerKeySet.has(fk));
+      });
 
       const repDirect = enrichedEligibleRep.map(p => ({
         ...p,

@@ -174,8 +174,16 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
     }));
   }, []);
 
+  // 대표필지 파일에는 경영체번호 컬럼이 없을 수 있다.
+  // 매칭은 PNU 또는 주소+필지번호로 하고, 경영체 정보는 추출 단계에서
+  // 마스터 파일 기준으로 채워지므로 여기서 강제할 이유가 없다.
+  const isRepresentative = fileConfig.role === 'representative';
+  const requiredKeys = isRepresentative ? ['address'] : ['farmerId', 'address'];
+  const isFieldRequired = (field: SystemField) =>
+    field.key === 'farmerId' ? !isRepresentative : field.required;
+
   const isRequiredMapped = (() => {
-    const baseOk = ['farmerId', 'address'].every((f) => {
+    const baseOk = requiredKeys.every((f) => {
       const val = mapping[f as keyof ColumnMapping];
       return typeof val === 'string' && val.trim() !== '';
     });
@@ -330,7 +338,7 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
                   <span className="text-sm font-medium text-gray-700">
                     {field.label}
                   </span>
-                  {field.required && (
+                  {isFieldRequired(field) && (
                     <span className="ml-1 text-red-500 font-semibold">*</span>
                   )}
                 </div>
@@ -445,7 +453,7 @@ export function ColumnMapper({ fileConfig, onMappingComplete }: ColumnMapperProp
                     <span className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                       매핑됨
                     </span>
-                  ) : field.required && !isDisabled ? (
+                  ) : isFieldRequired(field) && !isDisabled ? (
                     <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-500">
                       필수
                     </span>
