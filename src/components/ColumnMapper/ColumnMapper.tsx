@@ -33,7 +33,10 @@ const SYSTEM_FIELDS: SystemField[] = [
   { key: 'cropType',      label: '작물',      required: false, keywords: ['작물', '작목', '품목', '품종', '재배작물', '작목명', '작물명', '품목명'] },
   { key: 'landCategoryOfficial', label: '공부지목', required: false, keywords: ['공부지목', '지목', '지목명', '토지지목', '토지종류', '지목코드'] },
   { key: 'landCategoryActual',   label: '실지목',   required: false, keywords: ['실지목', '실제지목'] },
-  { key: 'pnu',           label: 'PNU코드',   required: false, keywords: ['직불신청_pnu', 'pnu코드', 'pnu', 'PNU', '필지고유번호'] },
+  // `basepnu`는 일부러 넣지 않는다. autoMatch의 2차 부분 매칭이 `BASEPNU`를
+  // `pnu`로 이미 잡고, 1차 정확 매칭은 `PNU`가 있을 때 그쪽을 고른다.
+  // 키워드로 넣으면 1차에서 `BASEPNU`가 먼저 걸려 정본인 `PNU`를 밀어낸다.
+  { key: 'pnu',           label: 'PNU코드',   required: false, keywords: ['직불신청_pnu', 'pnu코드', 'pnu', '필지고유번호'] },
 ];
 
 const SPLIT_FIELDS = [

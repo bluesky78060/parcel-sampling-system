@@ -10,6 +10,7 @@ import type {
   SpatialConfig,
 } from '../types';
 import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance } from './spatialUtils';
+import { parseNumericCell } from './excelParser';
 
 /**
  * 실지목 우선, 없으면 공부지목, 둘 다 없으면 '미분류'
@@ -38,7 +39,7 @@ export function getParcelArea(p: Parcel): number | null {
   for (const ak of areaKeys) {
     const v = p.rawData[ak];
     if (v != null) {
-      const n = parseFloat(String(v));
+      const n = parseNumericCell(v);
       if (!isNaN(n) && n > 0) return n;
     }
   }
@@ -48,7 +49,7 @@ export function getParcelArea(p: Parcel): number | null {
     const normAk = ak.replace(/\s/g, '');
     for (const rk of rawKeys) {
       if (rk.replace(/\s/g, '') === normAk) {
-        const n = parseFloat(String(p.rawData[rk]));
+        const n = parseNumericCell(p.rawData[rk]);
         if (!isNaN(n) && n > 0) return n;
       }
     }
