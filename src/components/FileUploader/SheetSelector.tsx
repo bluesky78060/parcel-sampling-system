@@ -27,6 +27,10 @@ export function SheetSelector({
     onChange(next);
   };
 
+  // 선택된 시트는 실제로 파싱했으므로 행 수가 정확하고,
+  // 나머지는 시트 범위(!ref) 기반 추정치라 빈 행이 섞이면 어긋날 수 있다
+  const isExact = (sheet: string) => selected.includes(sheet);
+
   const totalRows = rowCounts
     ? selected.reduce((sum, s) => sum + (rowCounts[s] ?? 0), 0)
     : null;
@@ -35,11 +39,16 @@ export function SheetSelector({
     <div className="mt-3">
       <div className="flex items-center justify-between mb-1">
         <label className="block text-xs font-medium text-gray-700">
-          시트 선택 <span className="text-gray-400 font-normal">(여러 개 선택 시 합쳐서 불러옵니다)</span>
+          시트 선택{' '}
+          <span className="text-gray-400 font-normal">
+            {selected.length === 1
+              ? '(여러 개 선택 시 합쳐서 불러옵니다 · 최소 1개 필요)'
+              : '(여러 개 선택 시 합쳐서 불러옵니다)'}
+          </span>
         </label>
         {totalRows != null && selected.length > 1 && (
           <span className="text-xs text-indigo-600 font-medium">
-            {selected.length}개 시트 · 약 {totalRows.toLocaleString()}행
+            {selected.length}개 시트 · {totalRows.toLocaleString()}행
           </span>
         )}
       </div>
@@ -47,6 +56,8 @@ export function SheetSelector({
         {sheets.map((sheet) => {
           const isChecked = selected.includes(sheet);
           const count = rowCounts?.[sheet];
+          // 마지막 하나를 해제하면 로드할 데이터가 없어지므로 막는다
+          const isLastChecked = isChecked && selected.length === 1;
           return (
             <label
               key={sheet}
@@ -57,7 +68,7 @@ export function SheetSelector({
               <input
                 type="checkbox"
                 checked={isChecked}
-                disabled={disabled}
+                disabled={disabled || isLastChecked}
                 onChange={() => toggle(sheet)}
                 className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
               />
@@ -66,7 +77,7 @@ export function SheetSelector({
               </span>
               {count != null && (
                 <span className="text-xs text-gray-400 flex-shrink-0">
-                  {count.toLocaleString()}행
+                  {isExact(sheet) ? '' : '약 '}{count.toLocaleString()}행
                 </span>
               )}
             </label>

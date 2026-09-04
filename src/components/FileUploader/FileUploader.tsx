@@ -73,7 +73,8 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
         sheetRowCounts: perSheet,
         // 시트가 여러 개일 때만 선택 UI를 띄운다
         allSheetNames: isMultiSheet ? sheetNames : undefined,
-        allSheetRowCounts: isMultiSheet ? counts : undefined,
+        // 실제로 읽은 시트는 정확한 행 수로 덮어쓴다 (counts는 !ref 기반 추정치)
+        allSheetRowCounts: isMultiSheet ? { ...counts, ...perSheet } : undefined,
         sourceFile: isMultiSheet ? file : undefined,
         rowCount: rows.length,
         status: 'pending',

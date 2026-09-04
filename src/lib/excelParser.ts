@@ -68,7 +68,7 @@ export function parseExcelSheets(
 
         const headerOrder: string[] = [];
         const headerSet = new Set<string>();
-        const allRows: Record<string, unknown>[] = [];
+        const rowsBySheet: Array<{ name: string; rows: Record<string, unknown>[] }> = [];
         const perSheet: Record<string, number> = {};
 
         for (const name of sheetNames) {
@@ -96,16 +96,24 @@ export function parseExcelSheets(
             }
           }
 
-          for (const row of filtered) {
-            allRows.push({ ...row, __sheet: name });
-          }
+          rowsBySheet.push({ name, rows: filtered });
           perSheet[name] = filtered.length;
         }
 
-        // 한쪽 시트에만 있는 컬럼은 빈 값으로 채워 행 구조를 균일하게 맞춘다
-        for (const row of allRows) {
-          for (const h of headerOrder) {
-            if (!(h in row)) row[h] = '';
+        // 출처 시트를 기록할 내부 키. 원본에 같은 이름의 컬럼이 있으면
+        // 그 값을 덮어쓰게 되므로 충돌하지 않는 이름을 고른다.
+        let sheetKey = '__sheet';
+        while (headerSet.has(sheetKey)) sheetKey += '_';
+
+        const allRows: Record<string, unknown>[] = [];
+        for (const { name, rows } of rowsBySheet) {
+          for (const row of rows) {
+            // 한쪽 시트에만 있는 컬럼은 빈 값으로 채워 행 구조를 균일하게 맞춘다
+            const merged: Record<string, unknown> = { ...row, [sheetKey]: name };
+            for (const h of headerOrder) {
+              if (!(h in merged)) merged[h] = '';
+            }
+            allRows.push(merged);
           }
         }
 
