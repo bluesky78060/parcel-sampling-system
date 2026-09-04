@@ -91,10 +91,9 @@ export function pointInPolygon(point: [number, number], polygon: [number, number
 }
 
 // VWORLD Data API URL (폴리곤 가져오기용)
-const isDev = import.meta.env.DEV;
-export const VWORLD_DATA_URL = isDev
-  ? '/api/vworld/req/data'
-  : 'https://api.vworld.kr/req/data';
+// VWORLD는 CORS 헤더를 보내지 않으므로 JSONP로 호출한다. 프록시가 필요 없어
+// dev/prod 모두 같은 주소를 쓴다. (jsonp 헬퍼 참조)
+export const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
 
 /** Build a parcel key from farmerId and parcelId */
 export function parcelKey(parcel: Parcel): string {
