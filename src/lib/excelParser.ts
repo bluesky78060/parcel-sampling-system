@@ -226,7 +226,7 @@ export function applyColumnMapping(
       cropType: mapping.cropType ? String(row[mapping.cropType] ?? '') : undefined,
       landCategoryOfficial: mapping.landCategoryOfficial ? String(row[mapping.landCategoryOfficial] ?? '').trim() : undefined,
       landCategoryActual: mapping.landCategoryActual ? String(row[mapping.landCategoryActual] ?? '').trim() : undefined,
-      area: mapping.area ? parseFloat(String(row[mapping.area] ?? '0')) || undefined : undefined,
+      area: mapping.area ? parseArea(row[mapping.area]) : undefined,
       pnu: extractPnu(row, mapping),
       sampledYears: year ? [year] : [],
       isEligible: true,
@@ -280,7 +280,50 @@ function parseEubmyeondongFromAddress(address: string): string {
 }
 
 // PNU 코드 추출: 매핑된 컬럼 → rawData 자동 감지
-const PNU_COLUMN_NAMES = ['직불신청_pnu', 'pnu', 'PNU', '필지고유번호', 'pnu코드'];
+// 실사용 파일의 PNU 컬럼명: 2027원본은 `PNU`, 2026 토양검정은 `BASEPNU`.
+// 예전에는 대소문자 구분 정확 매칭이라 `pnu`와 `PNU`를 따로 나열해야 했고,
+// 그러고도 `BASEPNU`는 목록에 없어 자동 감지가 실패했다.
+// 순서가 우선순위다. 다중 시트를 합쳐 2027 시트(`PNU`)와 2026 시트(`BASEPNU`)가
+// 함께 로드되면 두 헤더가 공존하므로, 정본인 `pnu`가 앞에 와야 한다.
+const PNU_COLUMN_NAMES = ['직불신청_pnu', 'pnu코드', 'pnu', 'basepnu', '필지고유번호'];
+
+/** 컬럼명 비교용 정규화 (대소문자·공백·밑줄 무시) */
+function normalizeColumnName(name: string): string {
+  return name.toLowerCase().replace(/[\s_]/g, '');
+}
+
+/**
+ * 면적 파싱.
+ *
+ * `sheet_to_json(..., { raw: false })`는 서식이 적용된 문자열을 준다.
+ * 셀에 천단위 구분자가 걸려 있으면 `"1,234"`가 넘어오고 `parseFloat`는 1을 준다.
+ * 실사용 파일 두 개(2027원본·2026 토양검정)에서는 구분자가 관측되지 않았지만,
+ * 걸리면 MIN_AREA(500㎡) 필터가 정상 필지를 대량으로 걷어내므로 미리 막는다.
+ *
+ * 0은 예전처럼 undefined로 둔다. "면적 0"과 "면적 정보 없음"을 뭉개는 것은 분명
+ * 결함이지만, 0을 살리면 이 함수 밖이 함께 바뀐다 — `excelExporter`가
+ * `p.area != null`로 rawData 폴백을 막고, `extractionStore`가 `area == null`
+ * 조건으로 하던 마스터 면적 상속을 건너뛴다. 2027 파일에 실제로 0값이 63건 있어
+ * 납품 시트에 0이 찍히는 회귀가 된다.
+ *
+ * 0을 부적격으로 볼지 정보 없음으로 볼지는 업무 결정이고, 소비 지점 두 곳을 함께
+ * 손봐야 한다. 이번 변경(쉼표 방어)에 섞지 않고 후속으로 남긴다.
+ */
+function parseArea(value: unknown): number | undefined {
+  if (value == null || value === '') return undefined;
+  const n = parseNumericCell(value);
+  return Number.isFinite(n) ? n || undefined : undefined;
+}
+
+/**
+ * 서식이 걸린 숫자 셀을 파싱한다.
+ *
+ * 면적을 읽는 곳이 셋(여기, `getParcelArea`의 rawData 폴백, 납품 시트의
+ * `getRawNum`)이라 한 곳만 고치면 나머지가 다른 숫자를 낸다. 한 군데로 모은다.
+ */
+export function parseNumericCell(value: unknown): number {
+  return parseFloat(String(value ?? '').replace(/,/g, ''));
+}
 
 function extractPnu(row: Record<string, unknown>, mapping: ColumnMapping): string | undefined {
   // 1. 명시적 매핑
@@ -288,9 +331,21 @@ function extractPnu(row: Record<string, unknown>, mapping: ColumnMapping): strin
     const v = String(row[mapping.pnu] ?? '').trim();
     if (v) return v;
   }
-  // 2. rawData에서 자동 감지
+  // 2. rawData에서 자동 감지 (대소문자·공백·밑줄 무시)
+  // 빈 값이 유효 값을 덮지 않게 한다. 다중 시트를 합칠 때 헤더 합집합을 채우느라
+  // 없는 컬럼에 '' 를 넣는데(위 parseExcelSheets), 시트마다 표기가 달라
+  // `{PNU:'479…', pnu:''}` 같은 행이 만들어진다. 무조건 덮어쓰면 그 행의 PNU가
+  // 통째로 사라져 이 함수가 고치려던 증상이 그대로 재발한다.
+  const normalizedRow = new Map<string, unknown>();
+  for (const key of Object.keys(row)) {
+    const nk = normalizeColumnName(key);
+    const prev = normalizedRow.get(nk);
+    if (prev == null || String(prev).trim() === '') {
+      normalizedRow.set(nk, row[key]);
+    }
+  }
   for (const col of PNU_COLUMN_NAMES) {
-    const v = row[col];
+    const v = normalizedRow.get(normalizeColumnName(col));
     if (v != null && String(v).trim()) return String(v).trim();
   }
   return undefined;

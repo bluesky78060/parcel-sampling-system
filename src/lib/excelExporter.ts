@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import type { Parcel, RiStat, FarmerStat } from '../types';
+import { parseNumericCell } from './excelParser';
 
 interface ExportData {
   selectedParcels: Parcel[];
@@ -114,7 +115,8 @@ function getRaw(p: Parcel, ...keys: string[]): string {
 function getRawNum(p: Parcel, ...keys: string[]): number {
   const v = getRaw(p, ...keys);
   if (!v) return 0;
-  const n = parseFloat(v);
+  // 서식이 걸린 셀("1,234")을 그냥 parseFloat하면 1이 되어 납품 시트에 찍힌다.
+  const n = parseNumericCell(v);
   return isNaN(n) ? 0 : n;
 }
 
