@@ -9,6 +9,7 @@ import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDista
 import { useGeocoding } from '../hooks/useGeocoding';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
 import { generatePnuForParcels } from '../lib/pnuGenerator';
+import { filterToTargetRegion, TARGET_REGION } from '../config/region';
 import { StatsDashboard } from '../components/Analysis/StatsDashboard';
 import { RiDistributionChart } from '../components/Analysis/RiDistributionChart';
 import { GeocodingProgress } from '../components/Analysis/GeocodingProgress';
@@ -29,6 +30,11 @@ export function AnalyzePage() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [distantRis, setDistantRis] = useState<DistantRiInfo[]>([]);
+  // 조사 대상 지역 밖이라 제외된 필지 내역 (조용히 버리지 않기 위해 화면에 알린다)
+  const [regionExcluded, setRegionExcluded] = useState<{
+    total: number;
+    bySigungu: Array<{ sigungu: string; count: number }>;
+  } | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   // PNU 생성 상태
@@ -99,11 +105,25 @@ export function AnalyzePage() {
 
     try {
       // 1. 컬럼 매핑 적용하여 Parcel 배열 생성
-      const masterParcels = applyColumnMapping(
+      const masterParcelsRaw = applyColumnMapping(
         masterFile.rawData,
         masterFile.columnMapping,
         masterFile.filename
       );
+
+      // 1-1. 조사 대상 지역(봉화군) 밖 필지 제외
+      // 봉화군 경영체가 타 시군에 보유한 필지가 섞여 들어온다. 이들은 PNU 생성도
+      // 좌표 변환도 안 되면서 리 목록과 리별 목표만 오염시킨다.
+      const masterFiltered = filterToTargetRegion(masterParcelsRaw);
+      const masterParcels = masterFiltered.kept;
+      if (masterFiltered.excluded.length > 0) {
+        console.info(
+          `[분석] ${TARGET_REGION.name} 밖 필지 제외: ${masterFiltered.excluded.length}건 / ${masterParcelsRaw.length}건`
+        );
+        for (const { sigungu, count } of masterFiltered.bySigungu) {
+          console.info(`  - ${sigungu}: ${count}건`);
+        }
+      }
 
       const parcels2024 = sampled2024?.rawData
         ? applyColumnMapping(
@@ -127,7 +147,7 @@ export function AnalyzePage() {
       const markedParcels = markEligibility(masterParcels, parcels2024, parcels2025);
 
       // 3. 대표필지 파싱 (있을 경우)
-      const repParcels = representativeFile?.rawData
+      const repParcelsRaw = representativeFile?.rawData
         ? applyColumnMapping(
             representativeFile.rawData,
             representativeFile.columnMapping,
@@ -141,6 +161,28 @@ export function AnalyzePage() {
             sampledYears: [] as number[],
           }))
         : [];
+      const repFiltered = filterToTargetRegion(repParcelsRaw);
+      const repParcels = repFiltered.kept;
+      if (repFiltered.excluded.length > 0) {
+        console.info(`[분석] 대표필지 중 ${TARGET_REGION.name} 밖 제외: ${repFiltered.excluded.length}건`);
+      }
+
+      // 제외 내역 집계 (마스터 + 대표필지)
+      const totalExcluded = masterFiltered.excluded.length + repFiltered.excluded.length;
+      if (totalExcluded > 0) {
+        const merged = new Map<string, number>();
+        for (const { sigungu, count } of [...masterFiltered.bySigungu, ...repFiltered.bySigungu]) {
+          merged.set(sigungu, (merged.get(sigungu) ?? 0) + count);
+        }
+        setRegionExcluded({
+          total: totalExcluded,
+          bySigungu: [...merged.entries()]
+            .map(([sigungu, count]) => ({ sigungu, count }))
+            .sort((a, b) => b.count - a.count),
+        });
+      } else {
+        setRegionExcluded(null);
+      }
 
       // 4. parcelStore에 저장
       parcelStore.setAllParcels(markedParcels);
@@ -355,6 +397,7 @@ export function AnalyzePage() {
               parcelStore.reset();
               setHasAnalyzed(false);
               setDistantRis([]);
+              setRegionExcluded(null);
               setAnalysisError(null);
               runAnalysis();
             }}
@@ -413,6 +456,38 @@ export function AnalyzePage() {
                   </li>
                 ))}
               </ul>
+            </div>
+          )}
+
+          {/* 조사 대상 지역 밖 필지 제외 안내 */}
+          {regionExcluded && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-start gap-2">
+                <svg className="w-5 h-5 text-slate-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-700">
+                    {TARGET_REGION.name} 밖 필지 {regionExcluded.total.toLocaleString()}건 제외
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {TARGET_REGION.name} 경영체가 타 시군에 보유한 필지입니다. PNU 생성·좌표 변환이
+                    되지 않고 리 목록만 늘리므로 분석 대상에서 뺐습니다.
+                  </p>
+                  <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5">
+                    {regionExcluded.bySigungu.slice(0, 8).map(({ sigungu, count }) => (
+                      <li key={sigungu} className="text-xs text-slate-600">
+                        {sigungu} <span className="text-slate-400">{count.toLocaleString()}건</span>
+                      </li>
+                    ))}
+                    {regionExcluded.bySigungu.length > 8 && (
+                      <li className="text-xs text-slate-400">
+                        외 {regionExcluded.bySigungu.length - 8}개 시군
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
 
