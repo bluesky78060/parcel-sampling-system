@@ -27,3 +27,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# OMC 런타임 상태 (커밋 대상 아님)
+.omc/

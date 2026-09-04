@@ -20,9 +20,10 @@ interface SystemField {
 
 const SYSTEM_FIELDS: SystemField[] = [
   { key: 'farmerId',      label: '경영체번호',  required: true,  keywords: ['경영체번호', '경영체 번호', '농가번호', '농가 번호', '농가코드', '관리번호', '농업인번호'] },
-  { key: 'farmerName',    label: '경영체명',    required: false, keywords: ['경영체명', '경영체 이름', '농가명', '농가 이름', '농가이름', '성명', '대표자명', '대표자'] },
+  { key: 'farmerName',    label: '경영체명',    required: false, keywords: ['경영체명', '경영체 이름', '농가명', '농가 이름', '농가이름', '성명', '대표자명', '대표자', '이름'] },
   { key: 'parcelId',      label: '필지번호',  required: true,  keywords: ['필지번호', '필지 번호', '필지코드', '지번', '지번번호', '번지'] },
-  { key: 'farmerAddress',  label: '경영체주소', required: false, keywords: ['경영체주소', '경영체 주소', '농가주소', '농가 주소', '주소지', '경영체소재지', '농가소재지'] },
+  // '거주지': "주소(거주지)" 같은 헤더는 부분 매칭이 header.includes(keyword)라 '주소지'로는 안 잡힌다
+  { key: 'farmerAddress',  label: '경영체주소', required: false, keywords: ['경영체주소', '경영체 주소', '농가주소', '농가 주소', '주소지', '경영체소재지', '농가소재지', '주소(거주지)', '거주지'] },
   { key: 'address',       label: '필지주소',  required: true,  keywords: ['필지주소', '필지 주소', '필지소재지', '필지 소재지', '지번주소', '지번 주소', '소재지', '소재'] },
   { key: 'ri',            label: '리/동',     required: false, keywords: ['법정리동', '법정리동명', '리동명', '리동', '법정리', '행정리', '리명', '법정동리', '동리명', '동리'] },
   { key: 'sido',          label: '시도',      required: false, keywords: ['시도명', '시도', '법정시도', '행정시도', '시·도'] },

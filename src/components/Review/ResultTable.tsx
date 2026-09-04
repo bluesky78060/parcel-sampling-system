@@ -18,6 +18,8 @@ interface ResultTableProps {
   onAddParcel: (parcel: Parcel) => void;
   onRemoveParcel: (farmerId: string, parcelId: string) => void;
   targetCount: number;
+  /** 표시용 선택 수. 생략 시 selectedParcels.length (겹치는 필지가 2행으로 잡힘) */
+  selectedCount?: number;
 }
 
 export function ResultTable({
@@ -27,6 +29,7 @@ export function ResultTable({
   onAddParcel,
   onRemoveParcel,
   targetCount,
+  selectedCount,
 }: ResultTableProps) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -229,7 +232,7 @@ export function ResultTable({
         />
         <span className="text-sm font-medium text-gray-700 whitespace-nowrap">
           선택:{' '}
-          <span className="text-blue-600 font-semibold">{selectedParcels.length}</span>
+          <span className="text-blue-600 font-semibold">{selectedCount ?? selectedParcels.length}</span>
           <span className="text-gray-400"> / {targetCount}</span>
         </span>
       </div>

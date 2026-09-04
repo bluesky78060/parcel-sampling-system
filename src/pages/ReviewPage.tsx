@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
-import { useExtractionStore } from '../store/extractionStore';
+import { useExtractionStore, countUniqueSelected } from '../store/extractionStore';
 import { ResultTable } from '../components/Review/ResultTable';
 import { ValidationPanel } from '../components/Review/ValidationPanel';
 import { KakaoMap } from '../components/Map/KakaoMap';
@@ -10,6 +10,8 @@ import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
 
 type TabId = 'table' | 'map';
+
+const EMPTY_PARCELS: Parcel[] = [];
 
 export function ReviewPage() {
   const navigate = useNavigate();
@@ -78,9 +80,7 @@ export function ReviewPage() {
     if (!result) navigate('/extract');
   }, [result, navigate]);
 
-  if (!result) return null;
-
-  const { selectedParcels, validation } = result;
+  const selectedParcels = result?.selectedParcels ?? EMPTY_PARCELS;
 
   // allParcels + representativeParcels 합쳐서 지도에 전달 (중복 제거)
   const allParcelsWithRep = useMemo(() => {
@@ -145,6 +145,12 @@ export function ReviewPage() {
     return { selected, representative, unselected, sampled2024, sampled2025, noCoords };
   }, [allParcels, selectedParcels, representativeParcels]);
 
+  if (!result) return null;
+
+  const { validation } = result;
+  // 화면 전체에서 '선택' 수의 기준을 하나로 (겹치는 필지를 1건으로 계산)
+  const uniqueSelectedCount = countUniqueSelected(selectedParcels);
+
   const tabs: { id: TabId; label: string }[] = [
     { id: 'table', label: '테이블 뷰' },
     { id: 'map', label: '지도 뷰' },
@@ -181,7 +187,7 @@ export function ReviewPage() {
         <div className="flex items-center gap-3 text-sm text-gray-600 mb-2">
           <span>
             선택:{' '}
-            <span className="font-semibold text-blue-600">{selectedParcels.length}</span>
+            <span className="font-semibold text-blue-600">{uniqueSelectedCount}</span>
             <span className="text-gray-400"> / {extractionConfig.totalTarget}</span>
           </span>
           <div className="h-4 w-px bg-gray-200" />
@@ -199,7 +205,7 @@ export function ReviewPage() {
       {/* 검증 패널 */}
       <ValidationPanel
         validation={validation}
-        selectedCount={selectedParcels.length}
+        selectedCount={uniqueSelectedCount}
         targetCount={extractionConfig.totalTarget}
       />
 
@@ -208,6 +214,7 @@ export function ReviewPage() {
         <ResultTable
           parcels={tableParcels}
           selectedParcels={selectedParcels}
+          selectedCount={uniqueSelectedCount}
           onToggleSelection={toggleParcelSelection}
           onAddParcel={addParcel}
           onRemoveParcel={removeParcel}
@@ -264,6 +271,18 @@ export function ReviewPage() {
                   </span>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* 좌표 변환 불가 안내 */}
+          {noCoordsCount > 0 && !geocoding.isAvailable && !isMapFullscreen && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <p className="text-sm font-medium text-gray-700">
+                좌표 없는 필지 {noCoordsCount.toLocaleString()}건
+              </p>
+              <p className="mt-0.5 text-xs text-gray-500">
+                이 환경에서는 좌표 변환을 사용할 수 없습니다. 지오코딩 API 키 설정이 필요합니다.
+              </p>
             </div>
           )}
 

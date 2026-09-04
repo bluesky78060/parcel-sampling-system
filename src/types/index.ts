@@ -37,7 +37,18 @@ export interface FileConfig {
   year: 2024 | 2025 | 2026;
   role: 'sampled' | 'master' | 'representative';
   columnMapping: ColumnMapping;
+  /** 대표 시트명 (표시용). 여러 시트를 합친 경우 첫 시트 */
   sheetName?: string;
+  /** 실제로 읽어들인 시트 목록. 여러 개면 합쳐서 로드된 것 */
+  sheetNames?: string[];
+  /** 읽어들인 시트별 행 수 */
+  sheetRowCounts?: Record<string, number>;
+  /** 파일에 존재하는 전체 시트 목록 (선택 UI용) */
+  allSheetNames?: string[];
+  /** 전체 시트별 행 수 (선택 UI 표시용) */
+  allSheetRowCounts?: Record<string, number>;
+  /** 원본 File 핸들. 페이지를 이동했다 돌아와도 시트를 다시 고를 수 있게 유지한다 */
+  sourceFile?: File;
   rowCount: number;
   status: 'pending' | 'mapped' | 'loaded';
   rawData?: Record<string, unknown>[];

@@ -524,6 +524,21 @@ export function AnalyzePage() {
             </div>
           )}
 
+          {/* 좌표 변환 불가 안내 */}
+          {!geocoding.isAvailable && (
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+              <div className="flex items-start gap-2">
+                <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                  <p className="text-sm font-medium text-gray-700">이 환경에서는 좌표 변환을 사용할 수 없습니다</p>
+                  <p className="text-xs text-gray-500">지오코딩 API 키가 빌드에 포함되지 않았습니다. 좌표 없이도 추출·검토·내보내기는 정상 동작합니다.</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Geocoding 진행률 */}
           {(geocoding.state.isRunning || geocoding.state.isComplete) && (
             <div className="space-y-2">

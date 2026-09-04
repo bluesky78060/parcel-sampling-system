@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParcelStore } from '../store/parcelStore';
-import { useExtractionStore } from '../store/extractionStore';
+import { useExtractionStore, countUniqueSelected } from '../store/extractionStore';
 import {
   calculateRiCentroids,
   calculateCentroid,
@@ -116,6 +116,21 @@ export function ExtractPage() {
     return { keys: dupKeys, count: dupKeys.size };
   }, [allParcels, representativeParcels, repCount]);
 
+  // 추출 결과 요약 — 공익직불제 ↔ 대표필지 겹침을 1건으로 계산한 고유 필지 수
+  const resultSummary = useMemo(() => {
+    const parcels = result?.selectedParcels ?? [];
+    const repSelected = parcels.filter(
+      (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
+    ).length;
+    const unique = countUniqueSelected(parcels);
+    return {
+      unique,
+      publicSelected: parcels.length - repSelected,
+      repSelected,
+      dupCount: parcels.length - unique,
+    };
+  }, [result]);
+
   const handleRunExtraction = () => {
     runExtraction(allParcels, representativeParcels);
   };
@@ -194,11 +209,12 @@ export function ExtractPage() {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                 </svg>
-                중복 필지 {duplicates.count}건 (양쪽 모두 포함)
+                원본 파일 간 동일 필지 {duplicates.count}건
               </div>
               <p className="text-xs text-blue-700 mt-1">
-                대표필지와 공익직불제에 동일한 필지가 {duplicates.count}건 있습니다.
-                양쪽 모두 그대로 포함되며, 공익직불제는 목표 {config.publicPaymentTarget}개를 그대로 추출합니다.
+                대표필지 파일과 마스터 파일에 동일한 필지가 {duplicates.count}건 있습니다
+                (엑셀 '중복여부' 컬럼 O 표시 기준). 이 중 적격 조건(기채취 미중복·제외 리 아님·면적 정보가 있으면 500㎡ 이상)을
+                통과한 대표필지만 양쪽 시트에 포함되며, 공익직불제는 목표 {config.publicPaymentTarget}개를 그대로 추출합니다.
                 중복 필지의 경영체 정보는 마스터 파일 기준으로 채워집니다.
               </p>
             </div>
@@ -234,9 +250,16 @@ export function ExtractPage() {
                   : 'bg-yellow-50 border-yellow-200 text-yellow-800'
               }`}
             >
-              <div className="flex items-center gap-2 font-semibold mb-1">
+              <div className="flex items-center gap-2 flex-wrap font-semibold mb-1">
                 <span>
-                  추출 결과: {result.selectedParcels.length.toLocaleString()}필지 선택
+                  추출 결과: {resultSummary.unique.toLocaleString()}필지 선택
+                  {resultSummary.dupCount > 0 && (
+                    <span className="font-normal">
+                      {' '}(공익직불제 {resultSummary.publicSelected.toLocaleString()}
+                      {' + '}대표필지 {resultSummary.repSelected.toLocaleString()}, 결과에 두 번 실림{' '}
+                      {resultSummary.dupCount.toLocaleString()}건)
+                    </span>
+                  )}
                 </span>
                 {result.validation.isValid ? (
                   <span className="text-green-600">검증 통과</span>

@@ -36,14 +36,14 @@ export class RateLimitError extends Error {
 // 프로덕션에서는 직접 호출 (VWORLD: CORS 허용, Kakao REST: 서버 전용이므로 프로덕션에서 사용 불가)
 const isDev = import.meta.env.DEV;
 
-// Kakao API — 프로덕션에서는 CORS 차단되므로 프록시 경로만 유효
-// 프로덕션 배포 시 Kakao REST API가 필요하면 서버 프록시를 별도 구성하세요.
-const KAKAO_ADDRESS_URL = isDev
-  ? '/api/kakao/v2/local/search/address.json'
-  : '/api/kakao/v2/local/search/address.json';
-const KAKAO_KEYWORD_URL = isDev
-  ? '/api/kakao/v2/local/search/keyword.json'
-  : '/api/kakao/v2/local/search/keyword.json';
+// Kakao API — 아래 경로는 vite dev 서버 프록시 전용이다.
+// 프로덕션(GitHub Pages)에서는 상대경로가 되어 404이고, Kakao REST는 CORS상
+// 브라우저에서 직접 호출할 수도 없다. 프로덕션에서 쓰려면 서버 프록시가 필요하다(후속 과제).
+const KAKAO_ADDRESS_URL = '/api/kakao/v2/local/search/address.json';
+const KAKAO_KEYWORD_URL = '/api/kakao/v2/local/search/keyword.json';
+
+// Kakao REST 사용 가능 여부 판정은 이 상수 한 곳에서만 한다.
+const KAKAO_REST_USABLE = isDev && !!import.meta.env.VITE_KAKAO_REST_KEY;
 
 // VWORLD API (국토교통부) — CORS 허용되므로 프로덕션에서도 직접 호출 가능
 const VWORLD_GEOCODE_URL = isDev
@@ -69,10 +69,11 @@ export async function warmupCache(): Promise<number> {
 }
 
 /**
- * API 키 존재 여부 확인 (VWORLD 또는 Kakao 중 하나라도 있으면 true)
+ * 실제로 호출 가능한 Geocoding 경로가 있는지 확인
+ * (VWORLD 키가 있거나, dev 프록시에서 Kakao REST를 쓸 수 있을 때만 true)
  */
 export function isGeocodingAvailable(): boolean {
-  return !!(import.meta.env.VITE_VWORLD_KEY || import.meta.env.VITE_KAKAO_REST_KEY);
+  return !!import.meta.env.VITE_VWORLD_KEY || KAKAO_REST_USABLE;
 }
 
 /**
@@ -80,7 +81,7 @@ export function isGeocodingAvailable(): boolean {
  */
 export function getGeocodingProvider(): 'vworld' | 'kakao' | null {
   if (import.meta.env.VITE_VWORLD_KEY) return 'vworld';
-  if (import.meta.env.VITE_KAKAO_REST_KEY) return 'kakao';
+  if (KAKAO_REST_USABLE) return 'kakao';
   return null;
 }
 
@@ -374,9 +375,9 @@ export async function geocodeAddress(address: string): Promise<LatLng | null> {
     }
   }
 
-  // Kakao 폴백
+  // Kakao 폴백 (dev 프록시에서만 동작)
   const kakaoKey = import.meta.env.VITE_KAKAO_REST_KEY;
-  if (kakaoKey) {
+  if (KAKAO_REST_USABLE && kakaoKey) {
     const result = await geocodeKakao(address, kakaoKey);
     if (result && isValidBonghwaCoord(result)) {
       cacheSet(cacheKey, result);

@@ -23,41 +23,101 @@ export function getSheetNames(file: File): Promise<string[]> {
 }
 
 /**
- * 엑셀 파일에서 특정 시트의 데이터를 파싱
- * - 헤더 자동 감지
- * - 빈 행 필터링
- * - EUC-KR 인코딩 대응 (codepage 옵션)
+ * 시트별 행 수를 미리 조회 (시트 선택 UI에서 보조 시트를 걸러내기 위함)
  */
-export function parseExcelFile(
-  file: File,
-  sheetName?: string
-): Promise<{ headers: string[]; rows: Record<string, unknown>[] }> {
+export function getSheetRowCounts(file: File): Promise<Record<string, number>> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array', codepage: 949 });
-        const sheet = workbook.Sheets[sheetName ?? workbook.SheetNames[0]];
+        const counts: Record<string, number> = {};
+        for (const name of workbook.SheetNames) {
+          // !ref 로 대략적인 행 수만 센다 (전 시트를 JSON으로 펼치면 느리다)
+          const ref = workbook.Sheets[name]?.['!ref'];
+          const range = ref ? XLSX.utils.decode_range(ref) : null;
+          // 헤더 1행 제외
+          counts[name] = range ? Math.max(0, range.e.r - range.s.r) : 0;
+        }
+        resolve(counts);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
+}
 
-        if (!sheet) {
-          reject(new Error(`시트를 찾을 수 없습니다: ${sheetName}`));
-          return;
+/**
+ * 여러 시트를 하나의 데이터셋으로 합쳐서 파싱
+ * - 시트마다 헤더가 다를 수 있으므로 헤더 합집합을 취하고, 없는 컬럼은 빈 값으로 채운다
+ * - 각 행에 출처 시트를 기록한다 (__sheet)
+ */
+export function parseExcelSheets(
+  file: File,
+  sheetNames: string[]
+): Promise<{ headers: string[]; rows: Record<string, unknown>[]; perSheet: Record<string, number> }> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target!.result as ArrayBuffer);
+        const workbook = XLSX.read(data, { type: 'array', codepage: 949 });
+
+        const headerOrder: string[] = [];
+        const headerSet = new Set<string>();
+        const rowsBySheet: Array<{ name: string; rows: Record<string, unknown>[] }> = [];
+        const perSheet: Record<string, number> = {};
+
+        for (const name of sheetNames) {
+          const sheet = workbook.Sheets[name];
+          if (!sheet) {
+            reject(new Error(`시트를 찾을 수 없습니다: ${name}`));
+            return;
+          }
+
+          const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
+            defval: '',
+            raw: false,
+          });
+          const filtered = jsonData.filter(row =>
+            Object.values(row).some(v => v !== '' && v != null)
+          );
+
+          // 헤더 합집합 — 등장 순서를 유지한다
+          if (filtered.length > 0) {
+            for (const key of Object.keys(filtered[0])) {
+              if (!headerSet.has(key)) {
+                headerSet.add(key);
+                headerOrder.push(key);
+              }
+            }
+          }
+
+          rowsBySheet.push({ name, rows: filtered });
+          perSheet[name] = filtered.length;
         }
 
-        const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-          defval: '',
-          raw: false,
-        });
+        // 출처 시트를 기록할 내부 키. 원본에 같은 이름의 컬럼이 있으면
+        // 그 값을 덮어쓰게 되므로 충돌하지 않는 이름을 고른다.
+        let sheetKey = '__sheet';
+        while (headerSet.has(sheetKey)) sheetKey += '_';
 
-        // 빈 행 필터링
-        const filtered = jsonData.filter(row =>
-          Object.values(row).some(v => v !== '' && v != null)
-        );
+        const allRows: Record<string, unknown>[] = [];
+        for (const { name, rows } of rowsBySheet) {
+          for (const row of rows) {
+            // 한쪽 시트에만 있는 컬럼은 빈 값으로 채워 행 구조를 균일하게 맞춘다
+            const merged: Record<string, unknown> = { ...row, [sheetKey]: name };
+            for (const h of headerOrder) {
+              if (!(h in merged)) merged[h] = '';
+            }
+            allRows.push(merged);
+          }
+        }
 
-        const headers = filtered.length > 0 ? Object.keys(filtered[0]) : [];
-
-        resolve({ headers, rows: filtered });
+        resolve({ headers: headerOrder, rows: allRows, perSheet });
       } catch (err) {
         reject(err);
       }

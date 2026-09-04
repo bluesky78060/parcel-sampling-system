@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import type { DragEvent, ChangeEvent } from 'react';
 import type { FileConfig } from '../../types';
-import { getSheetNames, parseExcelFile } from '../../lib/excelParser';
+import { getSheetNames, parseExcelSheets, getSheetRowCounts } from '../../lib/excelParser';
 import { useFileStore } from '../../store/fileStore';
 import { FileCard } from './FileCard';
 import { SheetSelector } from './SheetSelector';
@@ -19,29 +19,48 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
   const [isDragOver, setIsDragOver] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sheets, setSheets] = useState<string[]>([]);
-  const [selectedSheet, setSelectedSheet] = useState('');
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // 진행 중인 파싱 요청 식별자. 시트를 연달아 바꾸거나 파싱 중 파일을 제거하면
+  // 늦게 도착한 이전 결과가 최신 상태를 덮어쓸 수 있어, 최신 요청만 반영한다.
+  const requestIdRef = useRef(0);
 
   const uploadedFile = files.find((f) => f.id === slotId) ?? null;
 
-  const processFile = useCallback(async (file: File, sheetName?: string) => {
+  // 시트 정보는 스토어에서 파생한다. 컴포넌트 로컬 상태로 두면 다른 단계로 이동했다
+  // 돌아왔을 때 선택 UI가 사라져 시트를 다시 고를 수 없게 된다.
+  const sheets = uploadedFile?.allSheetNames ?? [];
+  const selectedSheets = uploadedFile?.sheetNames ?? [];
+  const sheetRowCounts = uploadedFile?.allSheetRowCounts ?? {};
+  const sourceFile = uploadedFile?.sourceFile ?? null;
+
+  const processFile = useCallback(async (file: File, targetSheets?: string[]) => {
+    const requestId = ++requestIdRef.current;
+    const isStale = () => requestId !== requestIdRef.current;
+
     setIsLoading(true);
     setError(null);
     try {
       const sheetNames = await getSheetNames(file);
-      const targetSheet = sheetName ?? sheetNames[0];
+      if (isStale()) return;
 
-      if (sheetNames.length > 1 && !sheetName) {
-        setSheets(sheetNames);
-        setSelectedSheet(sheetNames[0]);
-        setPendingFile(file);
-        setIsLoading(false);
-        return;
+      // 선택이 없으면 첫 시트를 기본으로 곧바로 로드한다.
+      // (선택을 기다렸다 등록하면 사용자가 기본값을 그대로 쓰려 할 때 등록할 방법이 없어진다)
+      const targets = targetSheets?.length ? targetSheets : [sheetNames[0]];
+
+      const counts = await getSheetRowCounts(file);
+      if (isStale()) return;
+
+      const { headers, rows, perSheet } = await parseExcelSheets(file, targets);
+      if (isStale()) return;
+
+      const isMultiSheet = sheetNames.length > 1;
+
+      if (targets.length > 1) {
+        console.info(
+          `[업로드] ${file.name}: ${targets.length}개 시트 합침 → ${rows.length.toLocaleString()}행 ` +
+          `(${targets.map(s => `${s} ${perSheet[s]?.toLocaleString() ?? 0}`).join(' + ')})`
+        );
       }
-
-      const { headers, rows } = await parseExcelFile(file, targetSheet);
 
       const fileConfig: FileConfig = {
         id: slotId,
@@ -49,7 +68,14 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
         year: defaultYear,
         role: defaultRole,
         columnMapping: { farmerId: '', parcelId: '', address: '' },
-        sheetName: targetSheet,
+        sheetName: targets[0],
+        sheetNames: targets,
+        sheetRowCounts: perSheet,
+        // 시트가 여러 개일 때만 선택 UI를 띄운다
+        allSheetNames: isMultiSheet ? sheetNames : undefined,
+        // 실제로 읽은 시트는 정확한 행 수로 덮어쓴다 (counts는 !ref 기반 추정치)
+        allSheetRowCounts: isMultiSheet ? { ...counts, ...perSheet } : undefined,
+        sourceFile: isMultiSheet ? file : undefined,
         rowCount: rows.length,
         status: 'pending',
         rawData: rows,
@@ -61,22 +87,20 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
       } else {
         addFile(fileConfig);
       }
-
-      setSheets([]);
-      setPendingFile(null);
     } catch (err) {
+      if (isStale()) return;
+      // 실패 시 스토어를 갱신하지 않으므로 기존 선택이 그대로 유지된다
       setError(err instanceof Error ? err.message : '파일 파싱 중 오류가 발생했습니다.');
     } finally {
-      setIsLoading(false);
+      if (!isStale()) setIsLoading(false);
     }
   }, [slotId, defaultYear, defaultRole, files, addFile, updateFile]);
 
-  const handleSheetChange = useCallback(async (sheet: string) => {
-    setSelectedSheet(sheet);
-    if (pendingFile) {
-      await processFile(pendingFile, sheet);
+  const handleSheetChange = useCallback(async (next: string[]) => {
+    if (sourceFile) {
+      await processFile(sourceFile, next);
     }
-  }, [pendingFile, processFile]);
+  }, [sourceFile, processFile]);
 
   const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -108,10 +132,11 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
   };
 
   const handleRemove = () => {
+    // 진행 중인 파싱 결과가 제거 후에 되살아나지 않도록 무효화한다
+    requestIdRef.current++;
     removeFile(slotId);
-    setSheets([]);
-    setPendingFile(null);
     setError(null);
+    setIsLoading(false);
   };
 
   if (uploadedFile) {
@@ -122,6 +147,16 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
           {required && <span className="ml-1 text-red-500">*</span>}
         </p>
         <FileCard fileConfig={uploadedFile} onRemove={handleRemove} />
+        {/* 다중 시트 파일은 등록 후에도 시트를 바꿀 수 있어야 한다 */}
+        <SheetSelector
+          sheets={sheets}
+          selected={selectedSheets}
+          rowCounts={sheetRowCounts}
+          onChange={handleSheetChange}
+          disabled={isLoading}
+        />
+        {isLoading && <p className="text-xs text-gray-500">시트를 다시 읽는 중...</p>}
+        {error && <p className="text-xs text-red-600">{error}</p>}
       </div>
     );
   }
@@ -178,8 +213,10 @@ export function FileUploader({ slotId, label, required, defaultYear, defaultRole
       {sheets.length > 1 && (
         <SheetSelector
           sheets={sheets}
-          selected={selectedSheet}
+          selected={selectedSheets}
+          rowCounts={sheetRowCounts}
           onChange={handleSheetChange}
+          disabled={isLoading}
         />
       )}
 
