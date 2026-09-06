@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
+import { getVworldKey } from '../lib/kakaoGeocoder';
 
 /**
  * Initializes a Leaflet map centered on Bonghwa-gun with VWORLD tile layers.
@@ -20,7 +21,7 @@ export function useMapInit(containerRef: React.RefObject<HTMLDivElement | null>)
       zoom: 11,
     });
 
-    const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+    const vworldKey = getVworldKey();
 
     if (vworldKey) {
       // VWORLD 기본지도 타일 레이어

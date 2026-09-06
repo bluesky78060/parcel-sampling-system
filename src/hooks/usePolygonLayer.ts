@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { jsonp } from '../lib/jsonp';
 import L from 'leaflet';
 import type { Parcel } from '../types';
-import { computePolygonCentroid } from '../lib/kakaoGeocoder';
+import { computePolygonCentroid, getVworldKey } from '../lib/kakaoGeocoder';
 import {
   getMarkerColor,
   pointInPolygon,
@@ -51,7 +51,7 @@ export function usePolygonLayer({
 
   useEffect(() => {
     const map = mapRef.current;
-    const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+    const vworldKey = getVworldKey();
     if (!map || !vworldKey) return;
 
     // 정리
