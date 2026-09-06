@@ -112,8 +112,21 @@ export function AnalyzePage() {
       );
 
       // 1-1. 조사 대상 지역(봉화군) 밖 필지 제외
-      // 봉화군 경영체가 타 시군에 보유한 필지가 섞여 들어온다. 이들은 PNU 생성도
-      // 좌표 변환도 안 되면서 리 목록과 리별 목표만 오염시킨다.
+      //
+      // 공익직불제는 경영체 단위로 신청하므로 인접 시군 소재 농지가 같은 파일에
+      // 섞여 들어온다. 실측(2027 파일 40,809행): 950건이 봉화군 밖이고 전부
+      // 인접 시군이다 — 영주시 582, 안동시 151, 울진군 101, 영양군 50.
+      //
+      // 빼는 이유는 셋이다.
+      //  1) 봉화군 토양검정 대상이 아니다.
+      //  2) PNU 접두가 47920이 아니라 봉화군 연속지적도 조회(pnu:like:47920…)에
+      //     걸리지 않는다. 좌표를 구할 방법이 없어 실패로만 쌓인다.
+      //  3) 리 목록을 오염시킨다. 봉화군에 없는 리 이름이 149개 더 들어와
+      //     71개여야 할 리가 220개가 되고, 목표 700을 그만큼 잘게 쪼개
+      //     정작 조사할 봉화군 리에서 뽑히는 수가 깎인다.
+      //
+      // 판정은 PNU 시군구 코드로만 한다. 이 필지들은 경영체주소 칸이 비어 있어
+      // (실측 950/950) 주소로는 소속을 알 수 없다.
       const masterFiltered = filterToTargetRegion(masterParcelsRaw);
       const masterParcels = masterFiltered.kept;
       if (masterFiltered.excluded.length > 0) {
@@ -471,8 +484,9 @@ export function AnalyzePage() {
                     {TARGET_REGION.name} 밖 필지 {regionExcluded.total.toLocaleString()}건 제외
                   </p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {TARGET_REGION.name} 경영체가 타 시군에 보유한 필지입니다. PNU 생성·좌표 변환이
-                    되지 않고 리 목록만 늘리므로 분석 대상에서 뺐습니다.
+                    필지 소재지가 {TARGET_REGION.name}이 아닙니다(PNU 시군구 코드 기준). 조사 대상이
+                    아닐 뿐 아니라, {TARGET_REGION.name} 지적도로는 좌표를 구할 수 없고 리 목록만
+                    늘려 리별 목표 배분을 왜곡하므로 분석에서 뺐습니다.
                   </p>
                   <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5">
                     {regionExcluded.bySigungu.slice(0, 8).map(({ sigungu, count }) => (
