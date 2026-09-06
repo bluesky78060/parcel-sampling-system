@@ -76,6 +76,23 @@ export function calculateDensity(
 }
 
 /**
+ * 먼 리 판정의 자동 임계값: 평균 + 2σ.
+ *
+ * 중위값을 쓰면 정의상 절반이 항상 넘어가므로, 리가 아무리 모여 있어도 절반이
+ * 제외된다. 봉화군 실측(71개 리, 0.8~26.8km)에서 중위값 10.5km는 35개를,
+ * 평균+2σ 22.6km는 2개를 잘라냈다.
+ *
+ * 대표필지 유무에 따라 기준이 갈리지 않도록 두 경로가 이 함수를 공유한다.
+ */
+export function meanPlusTwoSigma(values: number[]): number {
+  if (values.length === 0) return 0;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance =
+    values.reduce((acc, v) => acc + Math.pow(v - mean, 2), 0) / values.length;
+  return mean + Math.sqrt(variance) * 2;
+}
+
+/**
  * 전체 중심점에서 일정 거리 이상 떨어진 리(里) 식별
  * @param parcels 좌표가 있는 전체 필지
  * @param thresholdKm 기준 거리 (기본: 자동 계산 - 표준편차 * 2)
@@ -98,13 +115,7 @@ export function findDistantRis(parcels: Parcel[], thresholdKm?: number): string[
   let threshold = thresholdKm;
 
   if (threshold == null || threshold <= 0) {
-    // 자동 계산: 평균 + 표준편차 * 2
-    const dists = distances.map((d) => d.dist);
-    const mean = dists.reduce((a, b) => a + b, 0) / dists.length;
-    const variance =
-      dists.reduce((acc, d) => acc + Math.pow(d - mean, 2), 0) / dists.length;
-    const stdDev = Math.sqrt(variance);
-    threshold = mean + stdDev * 2;
+    threshold = meanPlusTwoSigma(distances.map((d) => d.dist));
   }
 
   return distances.filter((d) => d.dist > threshold!).map((d) => d.ri);

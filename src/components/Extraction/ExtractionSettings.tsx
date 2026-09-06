@@ -46,9 +46,10 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
               const v = Number(publicPaymentTargetStr);
               if (!isNaN(v) && publicPaymentTargetStr !== '') {
                 const clamped = Math.min(2000, Math.max(0, v));
+                // 대표필지는 총 목표 '안에' 포함되므로 더하지 않는다
                 onUpdate({
                   publicPaymentTarget: clamped,
-                  totalTarget: clamped + config.representativeTarget,
+                  totalTarget: clamped,
                 });
                 setPublicPaymentTargetStr(String(clamped));
               } else {
@@ -62,7 +63,9 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
           <label className="block text-sm font-medium text-gray-700 mb-1">
             대표필지 추출 목표
           </label>
-          <p className="text-xs text-gray-400 mb-2">대표필지 포함 수 (0 = 전부 포함)</p>
+          <p className="text-xs text-gray-400 mb-2">
+            총 목표 안에 넣을 대표필지 수 (0 = 적격 전부)
+          </p>
           <input
             type="number"
             min={0}
@@ -73,10 +76,7 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
               const v = Number(representativeTargetStr);
               if (!isNaN(v) && representativeTargetStr !== '') {
                 const clamped = Math.min(500, Math.max(0, v));
-                onUpdate({
-                  representativeTarget: clamped,
-                  totalTarget: config.publicPaymentTarget + clamped,
-                });
+                onUpdate({ representativeTarget: clamped });
                 setRepresentativeTargetStr(String(clamped));
               } else {
                 setRepresentativeTargetStr(String(config.representativeTarget));
@@ -90,8 +90,9 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             총 목표
           </label>
           <div className="rounded-md bg-gray-100 px-3 py-2 text-sm font-semibold text-gray-800">
-            {config.publicPaymentTarget + config.representativeTarget}개
+            {config.publicPaymentTarget}개
           </div>
+          <p className="text-xs text-gray-400 mt-1">대표필지는 이 안에 포함됩니다</p>
         </div>
       </div>
 

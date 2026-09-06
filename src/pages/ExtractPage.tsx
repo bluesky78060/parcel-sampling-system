@@ -214,7 +214,7 @@ export function ExtractPage() {
               <p className="text-xs text-blue-700 mt-1">
                 대표필지 파일과 마스터 파일에 동일한 필지가 {duplicates.count}건 있습니다
                 (엑셀 '중복여부' 컬럼 O 표시 기준). 이 중 적격 조건(기채취 미중복·제외 리 아님·면적 정보가 있으면 500㎡ 이상)을
-                통과한 대표필지만 양쪽 시트에 포함되며, 공익직불제는 목표 {config.publicPaymentTarget}개를 그대로 추출합니다.
+                통과한 대표필지는 목표 {config.publicPaymentTarget}개 '안에' 우선 포함되며, 그만큼 신규 추출분이 줄어듭니다.
                 중복 필지의 경영체 정보는 마스터 파일 기준으로 채워집니다.
               </p>
             </div>

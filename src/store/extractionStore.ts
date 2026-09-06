@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { ExtractionConfig, ExtractionResult, Parcel, SpatialConfig, ValidationResult } from '../types';
-import { extractParcels, getParcelArea, MIN_AREA } from '../lib/extractionAlgorithm';
+import { extractParcels, getParcelArea, validateExtraction, generateRiStats, generateFarmerStats, MIN_AREA } from '../lib/extractionAlgorithm';
 import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 
 /** 필지 매칭 키: PNU 또는 주소+필지번호 (excelExporter.getParcelKey와 동일 공식) */
@@ -284,26 +284,33 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         result.selectedParcels.map(farmerKey).filter((k): k is string => k !== null)
       );
 
-      // 공익직불제 추출 결과는 그대로 유지 (카테고리 변경 없음) — 대표필지와 겹치는 건수만 집계
-      const taggedPublic = result.selectedParcels;
-      const repInPublicCount = taggedPublic.filter(p => {
+      // 대표필지는 총 목표(publicPaymentTarget) '안에' 포함된다.
+      // 즉 공익직불제 700건 중 일부가 대표필지이지, 700에 더해지는 별도 쿼터가 아니다.
+      //
+      // 그래서 공익 추출에 이미 뽑힌 대표필지는 **행을 새로 만들지 않고 태깅만** 한다.
+      // 예전에는 적격 대표필지 전부를 `repDirect`로 다시 넣어서, 같은 필지가
+      // 공익직불제 행과 대표필지 행으로 두 번 실렸다(고유 700인데 화면 730행).
+      const taggedPublic = result.selectedParcels.map(p => {
         const fk = farmerKey(p);
-        return repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
-      }).length;
+        const isRep = repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
+        return isRep ? { ...p, parcelCategory: 'representative' as const } : p;
+      });
+      const repInPublicCount = taggedPublic.filter(p => p.parcelCategory === 'representative').length;
 
-      // 공익직불제에 포함되지 않은 적격 대표필지 → 대표필지로 직접 추가
+      // 공익직불제에 뽑히지 않은 적격 대표필지만 추가한다.
+      // 고정 관측점이므로 반드시 포함되어야 하고, 그만큼 신규 추출분이 밀려난다.
       const repNotInPublic = enrichedEligibleRep.filter(p => {
         const fk = farmerKey(p);
         return !selectedKeySet.has(matchKey(p)) && !(fk !== null && selectedFarmerKeySet.has(fk));
       });
 
-      const repDirect = enrichedEligibleRep.map(p => ({
+      const repDirect = repNotInPublic.map(p => ({
         ...p,
         parcelCategory: 'representative' as const,
         isSelected: true,
       }));
 
-      console.info(`[추출] 대표필지 처리: 적격 ${enrichedEligibleRep.length}건 전부 포함 (공익직불제 중복 ${repInPublicCount}건, 신규 추가 ${repNotInPublic.length}건)`);
+      console.info(`[추출] 대표필지 처리: 적격 ${enrichedEligibleRep.length}건 — 공익직불제에서 선택됨 ${repInPublicCount}건(태깅만), 별도 추가 ${repDirect.length}건`);
 
       // ── 4. 부적격 대표필지 → 마스터에서 대체 복사 ──
       let repSupplementCount = 0;
@@ -360,18 +367,112 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       }
 
       // ── 5. 최종 병합 ──
-      // 공익직불제 + 적격 대표필지 + 대체 대표필지
-      const finalParcels = [
-        ...taggedPublic,
-        ...repDirect,
-        ...repSupplements,
-      ];
+      // 대표필지는 총 목표 '안에' 들어간다. 공익 추출에서 뽑히지 못한 대표필지를
+      // 그냥 더하면 목표를 넘으므로, 넘는 만큼 비대표 필지를 덜어내 자리를 만든다.
+      // 대표필지는 고정 관측점이라 반드시 포함되어야 하고, 밀려나는 쪽은 신규 추출분이다.
+      const merged = [...taggedPublic, ...repDirect, ...repSupplements];
+      const overflow = publicTarget > 0 ? merged.length - publicTarget : 0;
+
+      let finalParcels = merged;
+      if (overflow > 0) {
+        // 리별 초과분부터 덜어낸다.
+        //
+        // 예전에는 배열 뒤에서부터 잘랐는데, `merged`는 점수 내림차순이 아니라
+        // **리 단위로 순차 push된** 배열이다(extractParcels Step 3). 그래서
+        // "뒤에서부터"는 "마스터에 늦게 등장한 리부터"였고, 리 71개 ×
+        // perRiTarget 10 = 710처럼 리별 목표 합이 총 목표를 넘는 실사용 설정에서
+        // **마지막 리가 통째로 날아갔다**(그 리 selectedCount 0 → RI_UNDERFILL).
+        //
+        // 목표를 가장 많이 초과한 리에서 한 건씩 돌아가며 빼면 특정 리만
+        // 파먹히지 않는다. 각 리 안에서는 뒤쪽(점수가 낮은 쪽)부터 뺀다.
+        // 대표필지는 애초에 후보에 넣지 않으므로 보호된다.
+        const riPools = new Map<string, number[]>();
+        for (let i = 0; i < merged.length; i++) {
+          if (merged[i].parcelCategory === 'representative') continue;
+          const ri = merged[i].ri;
+          if (!riPools.has(ri)) riPools.set(ri, []);
+          riPools.get(ri)!.push(i);
+        }
+        const pools = [...riPools.entries()].map(([ri, idxs]) => ({
+          ri,
+          idxs,
+          target: config.riTargetOverrides[ri] ?? config.perRiTarget,
+        }));
+
+        const dropIdx = new Set<number>();
+        while (dropIdx.size < overflow && pools.length > 0) {
+          // 목표 대비 초과가 큰 리부터 (동률이면 많이 가진 리부터)
+          pools.sort((a, b) =>
+            (b.idxs.length - b.target) - (a.idxs.length - a.target) ||
+            b.idxs.length - a.idxs.length
+          );
+          const top = pools[0];
+          if (top.idxs.length === 0) break;
+          dropIdx.add(top.idxs.pop()!);
+        }
+
+        finalParcels = merged.filter((_, i) => !dropIdx.has(i));
+        const repAdded = repDirect.length + repSupplements.length;
+        console.info(
+          `[추출] 목표(${publicTarget}) 유지를 위해 신규 추출분 ${dropIdx.size}건 제외 ` +
+          `— 대표필지 추가 ${repAdded}건, 리별 목표 합 초과 ${Math.max(0, overflow - repAdded)}건`
+        );
+        if (dropIdx.size < overflow) {
+          console.warn(
+            `[추출] 목표 초과 ${overflow - dropIdx.size}건 — 대표필지가 목표보다 많아 줄일 수 없습니다`
+          );
+        }
+      }
 
       const uniqueCount = countUniqueSelected(finalParcels);
-      console.info(`[추출] 최종: 공익직불제 ${taggedPublic.length}건 + 대표필지 ${repDirect.length + repSupplements.length}건 = 총 ${finalParcels.length}건 (고유 ${uniqueCount}건, 겹침 ${finalParcels.length - uniqueCount}건)`);
+      const repCount = finalParcels.filter(p => p.parcelCategory === 'representative').length;
+      console.info(
+        `[추출] 최종 ${finalParcels.length}건 (고유 ${uniqueCount}건) — ` +
+        `그중 대표필지 ${repCount}건, 신규 추출 ${finalParcels.length - repCount}건`
+      );
+
+      // ── 6. 최종 결과 기준으로 재검증 ──
+      // extractParcels가 만든 validation은 공익직불제 필지만, 그것도
+      // publicPaymentTarget으로 덮인 목표를 기준으로 계산한 것이다. 화면에는
+      // 대표필지까지 병합한 결과가 뜨므로 그대로 두면 "목표 700인데 N개"
+      // 경고가 실제 숫자와 어긋난다.
+      // 검증·통계와 화면·엑셀이 서로 다른 배열을 보면 같은 화면에서 숫자가 갈린다.
+      // 하나로 통일한다. matchKey는 마스터에서 고유하지 않으므로(같은 지번을
+      // 작물별로 여러 행 등록) dedupe는 여전히 의미가 있다.
+      finalParcels = dedupeSelected(finalParcels);
+
+      // 목표는 공익직불제 목표 그 자체다. 대표필지는 그 안에 들어가므로 더하지 않는다.
+      // `config.totalTarget`은 쓰지 않는다 — 사용자가 입력한 두 수의 합이라
+      // "대표필지 별도 쿼터"를 전제하는데, 확정된 규칙은 '총 목표 안에 포함'이다.
+      // publicTarget이 0이면 대표필지 전용 실행이므로 결과 자체가 목표다.
+      const effectiveTotal = publicTarget > 0 ? publicTarget : finalParcels.length;
+
+      // 통계도 병합 기준으로 다시 만든다. 그대로 두면 RI_UNDERFILL만 공익
+      // 기준이 되어 같은 화면 안에서 숫자가 어긋난다.
+      const mergedRiStats = generateRiStats(allParcels, finalParcels, config);
+      const mergedFarmerStats = generateFarmerStats(finalParcels);
+
+      // 농가 제한 면제는 **사용자가 지정한 대표필지**에만 준다.
+      // 카테고리(`parcelCategory === 'representative'`)로 거르면 셋이 섞인다.
+      //  - repDirect      : 사용자 지정, 농가별 슬라이스를 안 거침 → 면제 타당
+      //  - taggedPublic   : 사용자 지정이지만 **슬라이스를 이미 거쳐** 뽑힌 것
+      //  - repSupplements : 알고리즘이 고른 대체분, 사용자 지정이 아님
+      // 뒤 둘까지 면제하면 한 농가에 몰려도 경고가 안 뜬다.
+      const exemptKeys = new Set(repDirect.map(matchKey));
+
+      const validation = validateExtraction(finalParcels, config, mergedRiStats, {
+        totalTarget: effectiveTotal,
+        exemptFarmerLimitKeys: exemptKeys,
+      });
 
       set({
-        result: { ...result, selectedParcels: finalParcels },
+        result: {
+          ...result,
+          selectedParcels: finalParcels,
+          riStats: mergedRiStats,
+          farmerStats: mergedFarmerStats,
+          validation,
+        },
         isRunning: false,
       });
     } catch (err) {

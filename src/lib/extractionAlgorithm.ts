@@ -9,7 +9,7 @@ import type {
   ValidationMessage,
   SpatialConfig,
 } from '../types';
-import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance } from './spatialUtils';
+import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance, meanPlusTwoSigma } from './spatialUtils';
 import { parseNumericCell } from './excelParser';
 
 /**
@@ -379,13 +379,18 @@ export function extractParcels(
 
       let threshold = config.spatialConfig.maxRiDistanceKm;
       if (!threshold || threshold <= 0) {
-        // 자동 계산: 대표필지 중심에서 리별 거리의 중위값 사용
+        // 자동 계산: 평균 + 2σ.
+        //
+        // 예전에는 중위값을 썼다. 중위값은 정의상 절반을 넘기므로 **리가 아무리
+        // 모여 있어도 항상 절반이 제외된다.** 봉화군 실측(71개 리, 리 중심 기준
+        // 거리 0.8~26.8km)에서 중위값 10.5km는 35개 리를 잘라냈다. 상리(10.9km)
+        // 같은 평범한 거리까지 날아간다. 평균+2σ(22.6km)는 2개만 제외한다.
+        //
+        // 대표필지가 없는 경로(spatialUtils.findDistantRis)가 이미 평균+2σ를
+        // 쓰고 있었으므로, 기준이 갈라져 있던 것을 함께 맞춘 것이기도 하다.
         const dists = riDists.map(d => d.dist);
-
         if (dists.length > 0) {
-          const sorted = [...dists].sort((a, b) => a - b);
-          const median = sorted[Math.floor(sorted.length / 2)];
-          threshold = median;
+          threshold = meanPlusTwoSigma(dists);
         }
       }
 
@@ -502,7 +507,7 @@ export function extractParcels(
 /**
  * 리별 통계 생성
  */
-function generateRiStats(
+export function generateRiStats(
   allParcels: Parcel[],
   selectedParcels: Parcel[],
   config: ExtractionConfig
@@ -522,7 +527,7 @@ function generateRiStats(
 /**
  * 농가별 통계 생성
  */
-function generateFarmerStats(selectedParcels: Parcel[]): FarmerStat[] {
+export function generateFarmerStats(selectedParcels: Parcel[]): FarmerStat[] {
   const byFarmer = groupBy(selectedParcels, p => p.farmerId);
 
   return Object.entries(byFarmer).map(([farmerId, parcels]) => ({
@@ -536,26 +541,54 @@ function generateFarmerStats(selectedParcels: Parcel[]): FarmerStat[] {
 /**
  * 추출 결과 검증
  */
-function validateExtraction(
+/**
+ * 추출 결과 검증.
+ *
+ * `extractParcels` 안에서 한 번 호출되지만, 그 시점의 대상은 **공익직불제 필지만**이고
+ * 목표도 `publicPaymentTarget`으로 덮인 값이다. 대표필지까지 병합한 최종 결과를
+ * 화면에 띄우려면 병합 후 이 함수를 다시 불러야 숫자가 맞는다(extractionStore).
+ */
+export function validateExtraction(
   selectedParcels: Parcel[],
   config: ExtractionConfig,
-  riStats: RiStat[]
+  riStats: RiStat[],
+  options?: {
+    /** 총 추출 수 비교 기준. 없으면 `config.totalTarget`을 쓴다 */
+    totalTarget?: number;
+    /**
+     * 농가당 최대 제한 검증에서 뺄 필지의 키(`pnu` 또는 `주소__필지번호`).
+     * 카테고리가 아니라 키로 받는 이유는, `parcelCategory === 'representative'`가
+     * 사용자 지정 필지·알고리즘이 고른 대체분·이미 슬라이스를 거친 필지를
+     * 모두 싸잡기 때문이다. 면제는 사용자가 직접 지정한 것에만 줘야 한다.
+     */
+    exemptFarmerLimitKeys?: Set<string>;
+  }
 ): ValidationResult {
   const errors: ValidationMessage[] = [];
   const warnings: ValidationMessage[] = [];
 
   // 총 추출 수 검증
-  if (selectedParcels.length !== config.totalTarget) {
-    const level = Math.abs(selectedParcels.length - config.totalTarget) > 10 ? errors : warnings;
+  // 목표는 호출자가 넘긴 값을 우선한다. `config.totalTarget`은 사용자가 입력한
+  // 두 수의 합일 뿐이고, 대표필지는 `representativeTarget`을 상한으로 쓰지 않으며
+  // (0은 "전부 포함"을 뜻한다) 공익 추출과 겹치기까지 하므로 실제 결과와 다르다.
+  const totalTarget = options?.totalTarget ?? config.totalTarget;
+  if (selectedParcels.length !== totalTarget) {
+    const level = Math.abs(selectedParcels.length - totalTarget) > 10 ? errors : warnings;
     level.push({
       code: 'TOTAL_MISMATCH',
-      message: `총 추출 수가 목표(${config.totalTarget})와 다릅니다: ${selectedParcels.length}개`,
+      message: `총 추출 수가 목표(${totalTarget})와 다릅니다: ${selectedParcels.length}개`,
     });
   }
 
   // 농가당 최대 제한 검증
+  // 사용자가 직접 지정해 넣은 필지는 농가별 슬라이스를 거치지 않고 추가되므로
+  // 이 제한으로 재면 고칠 방법이 없는 오류가 뜬다. 그 키만 면제한다.
+  const exempt = options?.exemptFarmerLimitKeys;
+  const farmerLimitTargets = exempt
+    ? selectedParcels.filter(p => !exempt.has(p.pnu || `${p.address}__${p.parcelId}`))
+    : selectedParcels;
   const farmerCounts: Record<string, number> = {};
-  for (const p of selectedParcels) {
+  for (const p of farmerLimitTargets) {
     farmerCounts[p.farmerId] = (farmerCounts[p.farmerId] ?? 0) + 1;
   }
   const overLimitFarmers = Object.entries(farmerCounts).filter(([, c]) => c > config.maxPerFarmer);
