@@ -61,6 +61,22 @@ const KAKAO_REST_USABLE = isDev && !!import.meta.env.VITE_KAKAO_REST_KEY;
 const VWORLD_GEOCODE_URL = 'https://api.vworld.kr/req/address';
 const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
 
+/**
+ * VWORLD 인증키. 반드시 이 함수를 거쳐 읽는다.
+ *
+ * 2026-09-06 프로덕션 장애: GitHub Secret에 키를 넣을 때 앞에 공백이 들어갔고,
+ * 빌드가 `" EF3461DD-…"`를 그대로 번들에 박았다. URL에 실리면 `key=+EF3461DD-…`가
+ * 되어(`+`는 공백) VWORLD가 전 요청에 `INVALID_KEY 등록되지 않은 인증키입니다`를
+ * 돌려줬다. 4만 건이 통째로 실패했고, 원인이 화면에 드러나지 않아 한참을 헤맸다.
+ *
+ * 환경변수는 사람이 복사·붙여넣기로 채우는 값이므로 앞뒤 공백·따옴표를 걷어낸다.
+ */
+export function getVworldKey(): string {
+  const raw = import.meta.env.VITE_VWORLD_KEY;
+  if (!raw) return '';
+  return String(raw).trim().replace(/^["']|["']$/g, '');
+}
+
 /** VWORLD 응답 공통 형태 */
 interface VworldResponse {
   response?: {
@@ -100,14 +116,14 @@ export async function warmupCache(): Promise<number> {
  * (VWORLD 키가 있거나, dev 프록시에서 Kakao REST를 쓸 수 있을 때만 true)
  */
 export function isGeocodingAvailable(): boolean {
-  return !!import.meta.env.VITE_VWORLD_KEY || KAKAO_REST_USABLE;
+  return !!getVworldKey() || KAKAO_REST_USABLE;
 }
 
 /**
  * 어떤 Geocoding 서비스를 사용하는지 반환
  */
 export function getGeocodingProvider(): 'vworld' | 'kakao' | null {
-  if (import.meta.env.VITE_VWORLD_KEY) return 'vworld';
+  if (getVworldKey()) return 'vworld';
   if (KAKAO_REST_USABLE) return 'kakao';
   return null;
 }
@@ -244,7 +260,7 @@ export async function geocodePnu(pnu: string): Promise<LatLng | null> {
     return null;
   }
 
-  const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+  const vworldKey = getVworldKey();
   if (!vworldKey) return null;
 
   const layers = getPnuLayers(pnu);
@@ -335,7 +351,7 @@ export async function geocodeParcel(address: string, pnu?: string): Promise<LatL
 
   // Step 2: 폴리곤 중심점 스냅 (PNU가 있으면 정확한 위치로 보정)
   if (pnu) {
-    const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+    const vworldKey = getVworldKey();
     if (vworldKey) {
       const snapped = await snapToPolygonCentroid(approxCoord, pnu, vworldKey);
       if (snapped) {
@@ -439,7 +455,7 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   }
 
   // VWORLD 우선 시도
-  const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+  const vworldKey = getVworldKey();
   if (vworldKey) {
     const result = await geocodeVworld(address, vworldKey);
     if (result && isValidBonghwaCoord(result)) {
@@ -632,7 +648,7 @@ export async function prefetchPolygonsByPnu(
   pnus: string[],
   options?: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void }
 ): Promise<number> {
-  const vworldKey = import.meta.env.VITE_VWORLD_KEY;
+  const vworldKey = getVworldKey();
   if (!vworldKey) return 0;
 
   // 이미 스냅 캐시에 있거나, 연속지적도에 없다고 판명된 PNU는 제외한다.
