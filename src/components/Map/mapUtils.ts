@@ -3,6 +3,7 @@ import type { Parcel } from '../../types';
 import { escapeHtml } from '../../lib/htmlUtils';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
 import { isRepresentative } from '../../lib/parcelCategory';
+import { useSurveyStore, sampledYearsOf } from '../../store/surveyStore';
 
 // 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
 // 지오코딩 쪽과 갈라지면서, 통과한 좌표가 마커 단계에서 버려졌다.
@@ -12,8 +13,10 @@ export const isInBonghwa = isInBonghwaBounds;
 export function getMarkerColor(parcel: Parcel, isSelected: boolean): string {
   if (isRepresentative(parcel) && isSelected) return '#059669';
   if (isSelected) return '#2563eb';
-  if (parcel.sampledYears.includes(2024)) return '#dc2626';
-  if (parcel.sampledYears.includes(2025)) return '#ea580c';
+  // 기채취 연도는 조사 연도에서 파생된다. 최근 연도(N-1)가 빨강, 그 전(N-2)이 주황.
+  const [recent, older] = sampledYearsOf(useSurveyStore.getState().surveyYear);
+  if (parcel.sampledYears.includes(recent)) return '#dc2626';
+  if (parcel.sampledYears.includes(older)) return '#ea580c';
   if (parcel.isEligible) return '#6b7280';
   return '#9ca3af';
 }
@@ -61,7 +64,7 @@ export function createPopupContent(parcel: Parcel, isSelected: boolean): string 
       <tr><td style="color:#888;padding:2px 8px 2px 0">리</td><td>${escapeHtml(parcel.ri ?? '')}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">면적</td><td>${parcel.area ? escapeHtml(parcel.area.toLocaleString()) + ' m\u00B2' : '-'}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">채취이력</td><td>${parcel.sampledYears.length ? escapeHtml(parcel.sampledYears.join(', ')) + '년' : '없음'}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">2026 선택</td>
+      <tr><td style="color:#888;padding:2px 8px 2px 0">${useSurveyStore.getState().surveyYear} 선택</td>
         <td><b style="color:${selectionColor}">${escapeHtml(selectionText)}</b></td></tr>
     </table>
   </div>`;

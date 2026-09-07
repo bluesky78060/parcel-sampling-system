@@ -1,8 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useFileStore } from '../store/fileStore';
 import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
+import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 import { applyColumnMapping } from '../lib/excelParser';
 import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
@@ -44,11 +45,17 @@ export function AnalyzePage() {
     errors: string[];
   } | null>(null);
   const [isGeneratingPnu, setIsGeneratingPnu] = useState(false);
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
 
   const masterFile = files.find((f) => f.role === 'master');
-  const sampled2024 = files.find((f) => f.year === 2024 && f.role === 'sampled');
-  const sampled2025 = files.find((f) => f.year === 2025 && f.role === 'sampled');
   const representativeFile = files.find((f) => f.role === 'representative');
+  // 기채취 파일은 조사 연도에서 파생된 연도로 찾는다 (예전에는 2024/2025 리터럴)
+  const sampledFileByYear = useMemo(
+    () => sampledYearsOf(surveyYear).map(
+      (year) => [year, files.find((f) => f.year === year && f.role === 'sampled')] as const
+    ),
+    [files, surveyYear]
+  );
 
   // 파일 없으면 업로드 페이지로 (마운트 시 1회만)
   useEffect(() => {
@@ -138,26 +145,16 @@ export function AnalyzePage() {
         }
       }
 
-      const parcels2024 = sampled2024?.rawData
-        ? applyColumnMapping(
-            sampled2024.rawData,
-            sampled2024.columnMapping,
-            sampled2024.filename,
-            2024
-          )
-        : [];
-
-      const parcels2025 = sampled2025?.rawData
-        ? applyColumnMapping(
-            sampled2025.rawData,
-            sampled2025.columnMapping,
-            sampled2025.filename,
-            2025
-          )
-        : [];
+      // 기채취 파일을 연도별로 모은다. 연도는 조사 연도에서 파생된 값이다.
+      const sampledByYear: Record<number, Parcel[]> = {};
+      for (const [year, file] of sampledFileByYear) {
+        sampledByYear[year] = file?.rawData
+          ? applyColumnMapping(file.rawData, file.columnMapping, file.filename, year)
+          : [];
+      }
 
       // 2. 중복 감지 및 적격 마킹
-      const markedParcels = markEligibility(masterParcels, parcels2024, parcels2025);
+      const markedParcels = markEligibility(masterParcels, sampledByYear);
 
       // 3. 대표필지 파싱 (있을 경우)
       const repParcelsRaw = representativeFile?.rawData
@@ -199,8 +196,7 @@ export function AnalyzePage() {
 
       // 4. parcelStore에 저장
       parcelStore.setAllParcels(markedParcels);
-      parcelStore.setSampled2024(parcels2024);
-      parcelStore.setSampled2025(parcels2025);
+      parcelStore.setSampledByYear(sampledByYear);
       parcelStore.setRepresentativeParcels(repParcels);
       parcelStore.calculateStatistics(extractionConfig.totalTarget);
 
@@ -211,7 +207,7 @@ export function AnalyzePage() {
     } finally {
       setIsAnalyzing(false);
     }
-  }, [masterFile, sampled2024, sampled2025, representativeFile, parcelStore, extractionConfig.totalTarget]);
+  }, [masterFile, sampledFileByYear, representativeFile, parcelStore, extractionConfig.totalTarget]);
 
   // 좌표 변환 (사용자 수동 실행)
   const runGeocoding = useCallback(async () => {

@@ -1,5 +1,6 @@
 import type { Parcel } from '../../types';
 import { escapeHtml } from '../../lib/htmlUtils';
+import { useSurveyStore } from '../../store/surveyStore';
 
 export function createInfoWindowContent(parcel: Parcel): string {
   // HTML 문자열 반환 - 카카오맵 InfoWindow에 사용
@@ -12,7 +13,7 @@ export function createInfoWindowContent(parcel: Parcel): string {
       <tr><td style="color:#888;padding:2px 8px 2px 0">리</td><td>${escapeHtml(parcel.ri ?? '')}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">면적</td><td>${parcel.area ? escapeHtml(parcel.area.toLocaleString()) + ' m²' : '-'}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">채취이력</td><td>${parcel.sampledYears.length ? escapeHtml(parcel.sampledYears.join(', ')) + '년' : '없음'}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">2026 선택</td>
+      <tr><td style="color:#888;padding:2px 8px 2px 0">${useSurveyStore.getState().surveyYear} 선택</td>
         <td><b style="color:${parcel.isSelected ? '#2563eb' : '#999'}">${parcel.isSelected ? '추출 선택' : '미선택'}</b></td></tr>
     </table>
   </div>`;

@@ -2,18 +2,18 @@ import { create } from 'zustand';
 import type { Parcel, Statistics, DuplicateResult } from '../types';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
 import { parcelMatchKey } from '../lib/parcelKey';
+import { useSurveyStore, sampledYearsOf } from './surveyStore';
 
 interface ParcelStore {
   allParcels: Parcel[];
-  sampled2024: Parcel[];
-  sampled2025: Parcel[];
+  /** 기채취 필지. 키는 연도 — 예전에는 sampled2024/sampled2025 두 필드였다 */
+  sampledByYear: Record<number, Parcel[]>;
   representativeParcels: Parcel[];
   duplicateResult: DuplicateResult | null;
   statistics: Statistics | null;
 
   setAllParcels: (parcels: Parcel[]) => void;
-  setSampled2024: (parcels: Parcel[]) => void;
-  setSampled2025: (parcels: Parcel[]) => void;
+  setSampledByYear: (byYear: Record<number, Parcel[]>) => void;
   setRepresentativeParcels: (parcels: Parcel[]) => void;
   setDuplicateResult: (result: DuplicateResult) => void;
   updateParcels: (parcels: Parcel[]) => void;
@@ -26,15 +26,13 @@ interface ParcelStore {
 
 export const useParcelStore = create<ParcelStore>((set, get) => ({
   allParcels: [],
-  sampled2024: [],
-  sampled2025: [],
+  sampledByYear: {},
   representativeParcels: [],
   duplicateResult: null,
   statistics: null,
 
   setAllParcels: (parcels) => set({ allParcels: parcels }),
-  setSampled2024: (parcels) => set({ sampled2024: parcels }),
-  setSampled2025: (parcels) => set({ sampled2025: parcels }),
+  setSampledByYear: (byYear) => set({ sampledByYear: byYear }),
   setRepresentativeParcels: (parcels) => set({ representativeParcels: parcels }),
   setDuplicateResult: (result) => set({ duplicateResult: result }),
 
@@ -44,14 +42,16 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
     const { allParcels, representativeParcels } = get();
     const eligible = allParcels.filter((p) => p.isEligible);
     const riSet = new Set(eligible.map((p) => p.ri));
-    const sampled2024Count = allParcels.filter((p) => p.sampledYears.includes(2024)).length;
-    const sampled2025Count = allParcels.filter((p) => p.sampledYears.includes(2025)).length;
+    // 연도를 리터럴로 두지 않는다 — 조사 연도에서 파생된 값으로 센다
+    const sampledCountByYear: Record<number, number> = {};
+    for (const y of sampledYearsOf(useSurveyStore.getState().surveyYear)) {
+      sampledCountByYear[y] = allParcels.filter((p) => p.sampledYears.includes(y)).length;
+    }
 
     set({
       statistics: {
         totalParcels: allParcels.length,
-        sampled2024: sampled2024Count,
-        sampled2025: sampled2025Count,
+        sampledCountByYear,
         eligibleParcels: eligible.length,
         uniqueRis: riSet.size,
         // 고유 필지 기준으로 센다. 단순 합산은 대표필지가 마스터와 겹칠 때
@@ -90,8 +90,7 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
     void clearGeocodeCache();
     set({
       allParcels: [],
-      sampled2024: [],
-      sampled2025: [],
+      sampledByYear: {},
       representativeParcels: [],
       duplicateResult: null,
       statistics: null,

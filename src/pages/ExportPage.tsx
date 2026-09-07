@@ -6,8 +6,10 @@ import { useFileStore } from '../store/fileStore';
 import { exportToExcel } from '../lib/excelExporter';
 import { isPublicPayment, isRepresentative } from '../lib/parcelCategory';
 import { parcelMatchKey } from '../lib/parcelKey';
+import { useSurveyStore } from '../store/surveyStore';
 
 export function ExportPage() {
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
   const navigate = useNavigate();
   const { allParcels, representativeParcels, reset: resetParcel } = useParcelStore();
   const { result, config, reset: resetExtraction } = useExtractionStore();
@@ -248,7 +250,7 @@ export function ExportPage() {
           <ul className="space-y-1 text-sm text-gray-700 mb-6">
             <li>
               <span className="mr-2">📊</span>
-              2026_필지선정 (공익직불제){' '}
+              {surveyYear}_필지선정 (공익직불제){' '}
               <span className="text-gray-400">({publicPaymentCount}행)</span>
             </li>
             {repCount > 0 && (

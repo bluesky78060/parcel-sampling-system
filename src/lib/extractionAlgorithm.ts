@@ -628,12 +628,12 @@ export function validateExtraction(
     }
   }
 
-  // 중복 체크 (2024/2025 채취 필지가 포함되었는지)
+  // 중복 체크 (기채취 필지가 포함되었는지)
   const sampledIncluded = selectedParcels.filter(p => p.sampledYears.length > 0);
   if (sampledIncluded.length > 0) {
     errors.push({
       code: 'SAMPLED_INCLUDED',
-      message: `2024/2025 채취 필지가 ${sampledIncluded.length}건 포함되었습니다`,
+      message: `기채취 필지가 ${sampledIncluded.length}건 포함되었습니다`,
     });
   }
 
