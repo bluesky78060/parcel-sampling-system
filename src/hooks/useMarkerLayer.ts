@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { anyMarkerInView, deriveFitState, reduceFit } from '../lib/mapFitPolicy';
+import type { MapFitState } from '../lib/mapFitPolicy';
 import { useSurveyStore } from '../store/surveyStore';
 import {
   isInBonghwa,
@@ -11,6 +13,21 @@ import {
   createPopupContent,
   parcelKey,
 } from '../components/Map/mapUtils';
+
+/**
+ * 필지 하나를 자세히 볼 때의 줌.
+ *
+ * 두 곳이 이 값을 공유한다.
+ * - 마커 클릭 → `flyTo`
+ * - 화면 맞춤 → `fitBounds`의 `maxZoom`
+ *
+ * 후자에 상한이 없으면 마커가 1개일 때 Leaflet의 `getBoundsZoom`이 `Infinity`를 내고
+ * 타일 레이어의 `maxZoom`(22)으로 클램프된다. VWorld가 z22 타일을 주지 않으면
+ * **회색 화면**이 나온다. 리 필터 + 대표필지 조합이면 리당 1건이라 흔한 경로다.
+ *
+ * 두 곳이 같은 상수를 쓰므로 기준이 갈릴 수 없다 — 한쪽만 바꾸는 실수가 구조적으로 막힌다.
+ */
+const PARCEL_DETAIL_ZOOM = 17;
 
 export interface MarkerCounts {
   selected: number;
@@ -40,6 +57,8 @@ interface UseMarkerLayerReturn {
   outOfRangeCount: number;
   markerCounts: MarkerCounts;
   markerByKeyRef: React.RefObject<Map<string, L.Marker>>;
+  /** 지금 지도에 있는 마커 전체가 보이도록 화면을 맞춘다 (사용자가 직접 요청할 때만). */
+  fitToMarkers: () => void;
 }
 
 /** Create a Leaflet marker for a parcel with click handling */
@@ -65,7 +84,7 @@ function createParcelMarker(
   marker.bindPopup(() => createPopupContent(parcel, isSelected));
 
   marker.on('click', () => {
-    map.flyTo(latlng, 17, { duration: 0.8 });
+    map.flyTo(latlng, PARCEL_DETAIL_ZOOM, { duration: 0.8 });
 
     if (circleRef.current) {
       circleRef.current.remove();
@@ -115,7 +134,10 @@ function fitMapBounds(
       selectedBounds.push([parcel.coords.lat, parcel.coords.lng]);
     }
   }
-  map.fitBounds(selectedBounds.length > 0 ? selectedBounds : bounds, { padding: [30, 30] });
+  map.fitBounds(selectedBounds.length > 0 ? selectedBounds : bounds, {
+    padding: [30, 30],
+    maxZoom: PARCEL_DETAIL_ZOOM,
+  });
 }
 
 /**
@@ -138,6 +160,15 @@ export function useMarkerLayer({
   const unselectedMarkersRef = useRef<L.LayerGroup>(L.layerGroup());
   const markerByKeyRef = useRef<Map<string, L.Marker>>(new Map());
   const circleRef = useRef<L.Circle | null>(null);
+
+  /**
+   * **직전 렌더의** 판정 조건. 맞췄든 안 맞췄든 매번 갱신한다 —
+   * `hadMarkers`의 false→true 전이(좌표 변환 완료)를 놓치지 않기 위해서다.
+   * `if (fit)` 안으로 옮기면 그 규칙이 조용히 죽으므로 `reduceFit`이 갱신을 강제한다.
+   *
+   * 언제 맞출지는 `lib/mapFitPolicy`가 정한다.
+   */
+  const prevFitStateRef = useRef<MapFitState | null>(null);
 
   const [outOfRangeCount, setOutOfRangeCount] = useState(0);
   const [markerCounts, setMarkerCounts] = useState<MarkerCounts>({
@@ -268,8 +299,60 @@ export function useMarkerLayer({
     });
 
     toggleUnselectedLayer(map, unselectedMarkersRef.current, showUnselected);
-    fitMapBounds(map, bounds, parcelsWithCoords, selectedKeys);
+
+    // 마커가 있는데 화면 안에 하나도 없으면 맞춰야 한다 — 빈 지도에 "마커 700"
+    // 배지만 뜨는 모순을 막는다. 팬은 이 effect를 돌리지 않으므로 사용자가 스스로
+    // 옮긴 화면과는 싸우지 않는다. 마커 재생성 시점에만 판정한다.
+    const viewBounds = map.getBounds();
+    const inView = anyMarkerInView(bounds.map(([lat, lng]) => ({ lat, lng })), {
+      south: viewBounds.getSouth(),
+      west: viewBounds.getWest(),
+      north: viewBounds.getNorth(),
+      east: viewBounds.getEast(),
+    });
+
+    const renderedCount = countSelected + countRep + (showUnselected ? countUnselected : 0);
+    const { fit, next } = reduceFit(
+      prevFitStateRef.current,
+      deriveFitState({ filterRi, categoryFilter, renderedCount, anyMarkerInView: inView }),
+    );
+    prevFitStateRef.current = next;
+
+    if (fit) {
+      fitMapBounds(map, bounds, parcelsWithCoords, selectedKeys);
+    }
   }, [parcels, selectedKeys, filterRi, categoryFilter, showUnselected, surveyYear, mapRef, polygonCentroidCacheRef]);
 
-  return { outOfRangeCount, markerCounts, markerByKeyRef };
+  /**
+   * 자동 맞춤을 줄인 대신, 사용자가 화면을 잃었을 때 직접 되돌릴 수단을 준다.
+   * 자동 맞춤(`fitMapBounds`)이 선택 필지를 우선하는 것과 달리 이쪽은
+   * **지금 보이는 마커 전부**를 담는다 — 사용자가 누르는 순간 기대하는 것이 그것이다.
+   */
+  const fitToMarkers = useCallback(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // 저장해 둔 좌표가 아니라 **마커의 현재 위치**를 읽는다.
+    // `usePolygonLayer`가 폴리곤을 비동기로 받은 뒤 `marker.setLatLng(centroid)`로
+    // 위치를 보정하는데, 그때 마커 effect는 다시 돌지 않는다. 저장본을 쓰면
+    // 화면의 마커와 어긋난 좌표에 맞추게 된다.
+    //
+    // 키 맵(`markerByKeyRef`)이 아니라 **레이어를 순회**한다.
+    // 그 맵의 키는 `farmerId__parcelId`인데 지번은 리를 넘어 고유하지 않아
+    // (한 농가가 A리·B리에 같은 지번을 가질 수 있다 — `lib/parcelKey.ts` 참조)
+    // 충돌하면 `Map.set`이 앞 마커를 덮어써 그 좌표가 계산에서 빠진다.
+    // 레이어에는 그린 마커가 그대로 다 들어 있다.
+    const positions: L.LatLngTuple[] = [];
+    for (const layer of [selectedMarkersRef.current, unselectedMarkersRef.current]) {
+      layer.eachLayer((l) => {
+        const { lat, lng } = (l as L.Marker).getLatLng();
+        positions.push([lat, lng]);
+      });
+    }
+    if (positions.length === 0) return;
+
+    map.fitBounds(positions, { padding: [30, 30], maxZoom: PARCEL_DETAIL_ZOOM });
+  }, [mapRef]);
+
+  return { outOfRangeCount, markerCounts, markerByKeyRef, fitToMarkers };
 }
