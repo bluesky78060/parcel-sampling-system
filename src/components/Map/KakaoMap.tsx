@@ -43,7 +43,7 @@ export function KakaoMap({
   const mapRef = useMapInit(containerRef);
 
   // 2. Marker layer (must come before polygon layer so markerByKeyRef is available)
-  const { outOfRangeCount, markerCounts, markerByKeyRef } = useMarkerLayer({
+  const { outOfRangeCount, markerCounts, markerByKeyRef, fitToMarkers } = useMarkerLayer({
     mapRef,
     parcels,
     selectedKeys,
@@ -105,17 +105,30 @@ export function KakaoMap({
           )}
         </div>
       </div>
-      {/* 미선택 필지 토글 */}
-      <div className="absolute top-2 right-14 z-[1000] bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm">
-        <label className="flex items-center gap-1.5 cursor-pointer select-none">
-          <input
-            type="checkbox"
-            checked={showUnselected}
-            onChange={(e) => setShowUnselected(e.target.checked)}
-            className="rounded"
-          />
-          <span className="text-gray-700">미선택 필지 표시</span>
-        </label>
+      {/* 전체 보기 + 미선택 필지 토글 */}
+      <div className="absolute top-2 right-14 z-[1000] flex items-center gap-2">
+        {/* 화면은 필터를 바꿀 때만 자동으로 맞춰진다(사용자가 옮겨 둔 위치를 지키기 위해).
+            그래서 되돌릴 수단이 필요하다 — 이 버튼이 그 역할이다. */}
+        <button
+          type="button"
+          onClick={fitToMarkers}
+          disabled={markerCounts.total === 0}
+          title="지도에 있는 마커가 모두 보이도록 화면을 맞춥니다"
+          className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          전체 보기
+        </button>
+        <div className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm">
+          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={showUnselected}
+              onChange={(e) => setShowUnselected(e.target.checked)}
+              className="rounded"
+            />
+            <span className="text-gray-700">미선택 필지 표시</span>
+          </label>
+        </div>
       </div>
       {/* 경고 배지 (top-12 위치에 세로 배치) */}
       <div className="absolute top-12 left-12 z-[1000] flex flex-col gap-1">

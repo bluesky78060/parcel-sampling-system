@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { shouldAutoFit } from '../lib/mapFitPolicy';
+import type { MapFitState } from '../lib/mapFitPolicy';
 import { useSurveyStore } from '../store/surveyStore';
 import {
   isInBonghwa,
@@ -40,6 +42,8 @@ interface UseMarkerLayerReturn {
   outOfRangeCount: number;
   markerCounts: MarkerCounts;
   markerByKeyRef: React.RefObject<Map<string, L.Marker>>;
+  /** 지금 지도에 있는 마커 전체가 보이도록 화면을 맞춘다 (사용자가 직접 요청할 때만). */
+  fitToMarkers: () => void;
 }
 
 /** Create a Leaflet marker for a parcel with click handling */
@@ -138,6 +142,21 @@ export function useMarkerLayer({
   const unselectedMarkersRef = useRef<L.LayerGroup>(L.layerGroup());
   const markerByKeyRef = useRef<Map<string, L.Marker>>(new Map());
   const circleRef = useRef<L.Circle | null>(null);
+
+  /**
+   * 마지막으로 화면을 자동으로 맞췄을 때의 조건.
+   *
+   * 예전에는 마커를 다시 그릴 때마다 `fitBounds`를 걸었다. 그래서 사용자가 지도를
+   * 확대해 특정 필지를 보고 있다가 체크박스 하나만 눌러도 화면이 전체 범위로
+   * 튕겨 돌아왔다. 마커가 4만 개일 때는 느려서 조작 자체를 안 했기 때문에 드러나지
+   * 않았고, 700개로 줄여 조작이 가능해지자 바로 문제가 됐다.
+   *
+   * 이제는 **사용자가 보는 대상이 실제로 바뀐 경우에만** 맞춘다.
+   */
+  const lastAutoFitRef = useRef<MapFitState | null>(null);
+
+  /** 현재 마커들의 좌표. 수동 "전체 보기"가 이 값을 쓴다. */
+  const boundsRef = useRef<L.LatLngTuple[]>([]);
 
   const [outOfRangeCount, setOutOfRangeCount] = useState(0);
   const [markerCounts, setMarkerCounts] = useState<MarkerCounts>({
@@ -268,8 +287,30 @@ export function useMarkerLayer({
     });
 
     toggleUnselectedLayer(map, unselectedMarkersRef.current, showUnselected);
-    fitMapBounds(map, bounds, parcelsWithCoords, selectedKeys);
+
+    boundsRef.current = bounds;
+
+    // 언제 맞출지는 `lib/mapFitPolicy`가 정한다. 조건이 넷이고 서로 미묘해서
+    // 훅 안에 두면 회귀를 기계적으로 잡을 수 없다(Leaflet DOM 때문에 테스트 불가).
+    const renderedCount = countSelected + countRep + (showUnselected ? countUnselected : 0);
+    const fitState: MapFitState = { filterRi, categoryFilter, hadMarkers: renderedCount > 0 };
+
+    if (shouldAutoFit(lastAutoFitRef.current, fitState)) {
+      fitMapBounds(map, bounds, parcelsWithCoords, selectedKeys);
+    }
+    lastAutoFitRef.current = fitState;
   }, [parcels, selectedKeys, filterRi, categoryFilter, showUnselected, surveyYear, mapRef, polygonCentroidCacheRef]);
 
-  return { outOfRangeCount, markerCounts, markerByKeyRef };
+  /**
+   * 자동 맞춤을 줄인 대신, 사용자가 화면을 잃었을 때 직접 되돌릴 수단을 준다.
+   * 자동 맞춤(`fitMapBounds`)이 선택 필지를 우선하는 것과 달리 이쪽은
+   * **지금 보이는 마커 전부**를 담는다 — 사용자가 누르는 순간 기대하는 것이 그것이다.
+   */
+  const fitToMarkers = useCallback(() => {
+    const map = mapRef.current;
+    if (!map || boundsRef.current.length === 0) return;
+    map.fitBounds(boundsRef.current, { padding: [30, 30] });
+  }, [mapRef]);
+
+  return { outOfRangeCount, markerCounts, markerByKeyRef, fitToMarkers };
 }
