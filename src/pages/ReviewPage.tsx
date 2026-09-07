@@ -111,10 +111,29 @@ export function ReviewPage() {
     return [...selectedParcels, ...unselected];
   }, [allParcels, selectedParcels]);
 
-  // 추출 선택만 표시: 합쳐진 배열에서 좌표 포함된 데이터로 필터링
+  /**
+   * 추출 선택만 표시.
+   *
+   * 좌표 때문에 `allParcelsWithRep`을 소스로 쓴다 — `runGeocodingInReview`가
+   * 스토어의 필지만 갱신하고 `result.selectedParcels`는 건드리지 않기 때문이다.
+   *
+   * 그런데 그 배열은 중복 제거 때 **마스터 쪽 객체를 남기고**, 마스터 행의
+   * `parcelCategory`는 `'public-payment'`다. 대표필지 태깅(`'both'`)은
+   * `extractionStore`가 만든 **복사본**에만 붙어 있고 그것은 `result`에만 있다.
+   *
+   * 그대로 두면 마스터에도 있는 대표필지가 지도에서 초록 별이 아니라 파란 원으로
+   * 찍히고, 팝업도 "공익직불제 / 추출 선택"으로 나오며, 배지의 대표 수가 적게 세어진다.
+   * 좌표는 마스터 쪽에서, 분류는 결과 쪽에서 가져와 둘을 합친다.
+   */
   const mapSelectedParcels = useMemo(() => {
-    const keys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
-    return allParcelsWithRep.filter((p) => keys.has(`${p.farmerId}__${p.parcelId}`));
+    const keyOf = (p: Parcel) => `${p.farmerId}__${p.parcelId}`;
+    const categoryByKey = new Map(selectedParcels.map((p) => [keyOf(p), p.parcelCategory]));
+    return allParcelsWithRep
+      .filter((p) => categoryByKey.has(keyOf(p)))
+      .map((p) => {
+        const category = categoryByKey.get(keyOf(p));
+        return category && category !== p.parcelCategory ? { ...p, parcelCategory: category } : p;
+      });
   }, [allParcelsWithRep, selectedParcels]);
 
   const riList = useMemo(() => getRiList(), [getRiList]);

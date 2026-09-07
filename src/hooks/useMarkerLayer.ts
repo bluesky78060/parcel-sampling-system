@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { useSurveyStore } from '../store/surveyStore';
 import {
   isInBonghwa,
   getMarkerColor,
@@ -154,6 +155,11 @@ export function useMarkerLayer({
   const showDistanceCircleRef = useRef(showDistanceCircle);
   showDistanceCircleRef.current = showDistanceCircle;
 
+  // 마커 색은 기채취 연도(N-1 빨강, N-2 주황)에 달렸고, `getMarkerColor`가 그것을
+  // 스토어에서 직접 읽는다. 구독하지 않으면 조사 연도를 바꿔도 마커가 옛 색으로 남는다.
+  // 팝업은 열 때 읽으므로 새 연도를 쓰는데, 그러면 색과 팝업이 엇갈린다.
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
+
   // Add marker layers to map once
   useEffect(() => {
     const map = mapRef.current;
@@ -263,7 +269,7 @@ export function useMarkerLayer({
 
     toggleUnselectedLayer(map, unselectedMarkersRef.current, showUnselected);
     fitMapBounds(map, bounds, parcelsWithCoords, selectedKeys);
-  }, [parcels, selectedKeys, filterRi, categoryFilter, showUnselected, mapRef, polygonCentroidCacheRef]);
+  }, [parcels, selectedKeys, filterRi, categoryFilter, showUnselected, surveyYear, mapRef, polygonCentroidCacheRef]);
 
   return { outOfRangeCount, markerCounts, markerByKeyRef };
 }
