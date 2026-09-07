@@ -128,7 +128,7 @@ export function KakaoMap({
           <div className="bg-orange-50 border border-orange-300 rounded-md px-3 py-1.5 text-xs text-orange-700 shadow-sm">
             {/* 이 숫자는 **지도에 올린 집합** 기준이다. 페이지 상단 배너는 전체 필지
                 기준이라 값이 다르다 — 기준을 밝히지 않으면 두 숫자가 모순으로 보인다. */}
-            지도 대상 중 좌표 없음 {noCoordsCount.toLocaleString()}건
+            지도 대상 중 좌표 없음 {noCoordsCount.toLocaleString()}건 (데이터 분석에서 좌표 변환 실행 필요)
           </div>
         )}
       </div>

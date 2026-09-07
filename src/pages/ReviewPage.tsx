@@ -7,7 +7,7 @@ import { ValidationPanel } from '../components/Review/ValidationPanel';
 import { KakaoMap } from '../components/Map/KakaoMap';
 import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
-import type { Parcel } from '../types';
+import type { Parcel, ParcelCategory } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
 import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 
@@ -127,7 +127,21 @@ export function ReviewPage() {
    */
   const mapSelectedParcels = useMemo(() => {
     const keyOf = (p: Parcel) => `${p.farmerId}__${p.parcelId}`;
-    const categoryByKey = new Map(selectedParcels.map((p) => [keyOf(p), p.parcelCategory]));
+
+    // 이 키(`farmerId__parcelId`)는 **리를 넘어 고유하지 않다** — 한 농가가 A리와
+    // B리에 각각 지번 100-1을 가질 수 있다(`lib/parcelKey.ts`의 경고 참조).
+    // 그런 충돌에서 나중 항목으로 덮어쓰면, 공익직불제 필지가 대표필지 별로 찍힌다.
+    // 대표필지는 반드시 조사해야 하는 고정 관측점이라, 아닌 것을 그렇게 표시하는 쪽이
+    // 놓치는 쪽보다 현장에 더 나쁜 신호다. 충돌하면 어느 쪽도 믿을 수 없으므로
+    // 보정을 포기하고 원본 분류를 그대로 둔다.
+    // (키 자체를 `parcelMatchKey`로 통일하는 것이 근본 해결이며 별도 티켓이다.)
+    const categoryByKey = new Map<string, ParcelCategory | undefined>();
+    for (const p of selectedParcels) {
+      const key = keyOf(p);
+      if (!categoryByKey.has(key)) categoryByKey.set(key, p.parcelCategory);
+      else if (categoryByKey.get(key) !== p.parcelCategory) categoryByKey.set(key, undefined);
+    }
+
     return allParcelsWithRep
       .filter((p) => categoryByKey.has(keyOf(p)))
       .map((p) => {
