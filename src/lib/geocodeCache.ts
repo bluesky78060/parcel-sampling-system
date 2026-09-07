@@ -9,7 +9,10 @@ import type { LatLng } from '../types';
 
 const DB_NAME = 'geocode-cache';
 const STORE_NAME = 'coords';
-const DB_VERSION = 2; // v2: BONBUN/BUBUN 양쪽 레이어 지원으로 기존 캐시 무효화
+// v3(2026-09-07): computePolygonCentroid의 상쇄 오차를 고쳤다. v2까지 저장된 좌표는
+// 필지 중심에서 중앙값 22.5m, 최대 8km 벗어나 있으므로 전부 버려야 한다.
+// v2: BONBUN/BUBUN 양쪽 레이어 지원으로 기존 캐시 무효화
+const DB_VERSION = 3;
 const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30일
 
 interface CacheEntry {
@@ -33,8 +36,24 @@ function openDB(): Promise<IDBDatabase> {
       }
       db.createObjectStore(STORE_NAME, { keyPath: 'key' });
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // 다른 탭이 더 높은 버전으로 열려고 하면 이 연결을 놓아준다. 안 놓아주면
+      // 그 탭의 open()이 영영 끝나지 않는다(아래 onblocked 참조).
+      db.onversionchange = () => {
+        db.close();
+        dbPromise = null;
+      };
+      resolve(db);
+    };
     req.onerror = () => reject(req.error);
+    // DB_VERSION을 올린 배포 직후, 옛 버전 탭이 아직 열려 있으면 여기로 온다.
+    // 대기 상태로 두면 loadAllFromIDB → warmupCache → 배치 전체가 소리 없이 멈춘다.
+    // 캐시는 없어도 동작하므로(모든 호출부가 실패를 삼킨다) 즉시 포기한다.
+    req.onblocked = () => {
+      console.warn('[geocodeCache] 다른 탭이 옛 버전 DB를 잡고 있어 캐시를 쓰지 않습니다');
+      reject(new Error('IndexedDB upgrade blocked by another tab'));
+    };
   });
   return dbPromise;
 }
