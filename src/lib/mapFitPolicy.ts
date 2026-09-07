@@ -10,6 +10,8 @@
  * Leaflet DOM이 필요한 훅 안에 두면 회귀를 기계적으로 잡을 수 없다.
  */
 
+import type { LatLng } from '../types';
+
 /** 지도 카테고리 필터. 훅의 prop 타입과 같은 유니온을 유지한다 — `string`으로 넓히면 오타가 조용히 통과한다. */
 export type MapCategoryFilter = 'all' | 'public-payment' | 'representative';
 
@@ -32,6 +34,31 @@ export interface MapFitState {
  * 참이 되어 **필터를 만진 적도 없는데 화면이 맞춰진다.** 여기서 막는다.
  */
 const normalizeRi = (value?: string): string | undefined => value || undefined;
+
+/** 지도 화면의 경계. Leaflet 타입에 의존하지 않도록 숫자 넷으로만 받는다. */
+export interface ViewRect {
+  south: number;
+  west: number;
+  north: number;
+  east: number;
+}
+
+/**
+ * 렌더된 마커 중 화면 안에 든 것이 하나라도 있는가.
+ *
+ * 훅 안에서 `bounds.some((ll) => viewBounds.contains(ll))` 한 줄로 두었더니,
+ * 이 값을 `false`로 고정하는 변이가 189건을 **전부 통과**했다.
+ * `false` 고정은 마커를 다시 그릴 때마다 무조건 맞추게 만든다 —
+ * **PROJ1-1-36이 고치려던 바로 그 동작**인데 초록불이었다.
+ *
+ * 판정에 실제로 쓰이는 계산은 전부 이 모듈 안에 있어야 한다.
+ */
+export function anyMarkerInView(positions: readonly LatLng[], view: ViewRect): boolean {
+  return positions.some(
+    ({ lat, lng }) =>
+      lat >= view.south && lat <= view.north && lng >= view.west && lng <= view.east,
+  );
+}
 
 /**
  * 마커 렌더 결과로부터 판정 상태를 만든다.
@@ -76,6 +103,13 @@ export function deriveFitState(input: {
  *
  * 마커가 있다가 없어진 경우는 움직이지 않는다 — 맞출 대상이 없기도 하고,
  * 필터를 되돌렸을 때 원래 보던 자리로 돌아오는 편이 낫다.
+ *
+ * **주의**: 마지막 규칙은 "사용자가 방금 그 자리에서 없앤 마커"와 "표시 대상이 통째로
+ * 바뀐 경우"를 구분하지 않는다. 지금은 선택 해제 컨트롤이 표 탭에만 있고 지도 탭의
+ * 상세 패널은 읽기 전용이라 도달하지 않는다. **지도에서 선택을 해제할 수 있게 되면**
+ * 확대해 보던 필지를 해제하는 순간 뷰포트가 비어 전체로 튕기고, 그것은 이 규칙이
+ * 없애려던 감각과 정확히 같다. 그때는 상태값에 선택 시그니처를 넣어
+ * 선택 변경만으로는 뷰포트 규칙이 발동하지 않도록 해야 한다.
  */
 export function shouldAutoFit(last: MapFitState | null, current: MapFitState): boolean {
   if (last === null) return true;

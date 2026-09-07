@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveFitState, reduceFit, shouldAutoFit } from '../mapFitPolicy';
+import { anyMarkerInView, deriveFitState, reduceFit, shouldAutoFit } from '../mapFitPolicy';
 import type { MapFitState } from '../mapFitPolicy';
 
 const state = (overrides: Partial<MapFitState> = {}): MapFitState => ({
@@ -136,6 +136,46 @@ describe('shouldAutoFit — 조건이 겹칠 때', () => {
         state({ filterRi: '없는리', hadMarkers: false, anyMarkerInView: false }),
       ),
     ).toBe(true);
+  });
+});
+
+/**
+ * 이 계산을 훅 안에 한 줄로 두었더니 `false`로 고정하는 변이가 189건을 **전부 통과**했다.
+ * `false` 고정은 마커를 다시 그릴 때마다 무조건 맞추게 만든다 —
+ * PROJ1-1-36이 고치려던 바로 그 동작인데 초록불이었다.
+ */
+describe('anyMarkerInView', () => {
+  // 봉화군 언저리의 작은 사각형
+  const view = { south: 36.8, west: 128.8, north: 37.0, east: 129.0 };
+
+  it('마커가 하나도 없으면 false다', () => {
+    expect(anyMarkerInView([], view)).toBe(false);
+  });
+
+  it('화면 안에 하나라도 있으면 true다', () => {
+    expect(anyMarkerInView([{ lat: 36.9, lng: 128.9 }], view)).toBe(true);
+    expect(
+      anyMarkerInView([{ lat: 40, lng: 130 }, { lat: 36.9, lng: 128.9 }], view),
+    ).toBe(true);
+  });
+
+  it('전부 화면 밖이면 false다', () => {
+    expect(
+      anyMarkerInView([{ lat: 40, lng: 130 }, { lat: 35, lng: 127 }], view),
+    ).toBe(false);
+  });
+
+  it('경계 위의 마커는 안에 있는 것으로 본다', () => {
+    expect(anyMarkerInView([{ lat: 36.8, lng: 128.8 }], view)).toBe(true);
+    expect(anyMarkerInView([{ lat: 37.0, lng: 129.0 }], view)).toBe(true);
+  });
+
+  it('위도만 맞고 경도가 벗어나면 false다', () => {
+    expect(anyMarkerInView([{ lat: 36.9, lng: 130 }], view)).toBe(false);
+  });
+
+  it('경도만 맞고 위도가 벗어나면 false다', () => {
+    expect(anyMarkerInView([{ lat: 40, lng: 128.9 }], view)).toBe(false);
   });
 });
 

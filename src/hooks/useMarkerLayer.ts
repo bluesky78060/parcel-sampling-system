@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
-import { deriveFitState, reduceFit } from '../lib/mapFitPolicy';
+import { anyMarkerInView, deriveFitState, reduceFit } from '../lib/mapFitPolicy';
 import type { MapFitState } from '../lib/mapFitPolicy';
 import { useSurveyStore } from '../store/surveyStore';
 import {
@@ -304,12 +304,17 @@ export function useMarkerLayer({
     // 배지만 뜨는 모순을 막는다. 팬은 이 effect를 돌리지 않으므로 사용자가 스스로
     // 옮긴 화면과는 싸우지 않는다. 마커 재생성 시점에만 판정한다.
     const viewBounds = map.getBounds();
-    const anyMarkerInView = bounds.some((latlng) => viewBounds.contains(latlng));
+    const inView = anyMarkerInView(bounds.map(([lat, lng]) => ({ lat, lng })), {
+      south: viewBounds.getSouth(),
+      west: viewBounds.getWest(),
+      north: viewBounds.getNorth(),
+      east: viewBounds.getEast(),
+    });
 
     const renderedCount = countSelected + countRep + (showUnselected ? countUnselected : 0);
     const { fit, next } = reduceFit(
       prevFitStateRef.current,
-      deriveFitState({ filterRi, categoryFilter, renderedCount, anyMarkerInView }),
+      deriveFitState({ filterRi, categoryFilter, renderedCount, anyMarkerInView: inView }),
     );
     prevFitStateRef.current = next;
 
@@ -331,10 +336,18 @@ export function useMarkerLayer({
     // `usePolygonLayer`가 폴리곤을 비동기로 받은 뒤 `marker.setLatLng(centroid)`로
     // 위치를 보정하는데, 그때 마커 effect는 다시 돌지 않는다. 저장본을 쓰면
     // 화면의 마커와 어긋난 좌표에 맞추게 된다.
+    //
+    // 키 맵(`markerByKeyRef`)이 아니라 **레이어를 순회**한다.
+    // 그 맵의 키는 `farmerId__parcelId`인데 지번은 리를 넘어 고유하지 않아
+    // (한 농가가 A리·B리에 같은 지번을 가질 수 있다 — `lib/parcelKey.ts` 참조)
+    // 충돌하면 `Map.set`이 앞 마커를 덮어써 그 좌표가 계산에서 빠진다.
+    // 레이어에는 그린 마커가 그대로 다 들어 있다.
     const positions: L.LatLngTuple[] = [];
-    for (const marker of markerByKeyRef.current.values()) {
-      const { lat, lng } = marker.getLatLng();
-      positions.push([lat, lng]);
+    for (const layer of [selectedMarkersRef.current, unselectedMarkersRef.current]) {
+      layer.eachLayer((l) => {
+        const { lat, lng } = (l as L.Marker).getLatLng();
+        positions.push([lat, lng]);
+      });
     }
     if (positions.length === 0) return;
 
