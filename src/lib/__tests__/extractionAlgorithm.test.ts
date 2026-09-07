@@ -5,8 +5,10 @@ import {
   generateFarmerStats,
   generateRiStats,
   getParcelArea,
+  validateExtraction,
 } from '../extractionAlgorithm';
 import { parcelMatchKey } from '../parcelKey';
+import type { Parcel } from '../../types';
 import { makeConfig, makeParcel } from './factories';
 
 beforeAll(() => {
@@ -171,6 +173,36 @@ describe('extractParcels — 결과 불변식', () => {
     expect(result.selectedParcels.length).toBeLessThanOrEqual(20);
   });
 
+  /**
+   * `validateExtraction`은 `extractParcels`가 매 호출마다 돌리므로 커버리지 도구에는
+   * covered로 뜨지만, 결과를 아무도 읽지 않으면 어서션이 0이다. 실제로 TOTAL_MISMATCH·
+   * FARMER_OVER_LIMIT·SAMPLED_INCLUDED 세 검사를 각각 무력화해도 테스트가 전부
+   * 살아남았다. 검증기를 검증하는 것이 없으면 검증기가 조용히 죽는다.
+   */
+  it('후보가 충분하면 검증 오류 없이 목표를 정확히 채운다', () => {
+    const result = extractParcels(
+      parcels,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20 }),
+    );
+    expect(result.selectedParcels).toHaveLength(20);
+    expect(result.validation.errors).toEqual([]);
+    expect(result.validation.isValid).toBe(true);
+  });
+
+  it('기채취 필지는 후보에 있어도 뽑히지 않는다', () => {
+    const sampled = makeParcel({
+      farmerId: 'FX',
+      parcelId: '999',
+      sampledYears: [2025],
+      isEligible: false,
+    });
+    const result = extractParcels(
+      [...parcels, sampled],
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20 }),
+    );
+    expect(result.selectedParcels.some((p) => p.parcelId === '999')).toBe(false);
+  });
+
   it('같은 필지를 두 번 뽑지 않는다', () => {
     const result = extractParcels(
       parcels,
@@ -206,17 +238,206 @@ describe('extractParcels — 결과 불변식', () => {
   });
 });
 
-describe('generateRiStats / generateFarmerStats', () => {
-  it('리별로 선택 수를 센다', () => {
+/**
+ * `makeConfig`의 기본 `perRiTarget: 0`은 Step 3(`extractFromRi`)을 통째로 건너뛴다.
+ * 그래서 위의 테스트들은 전부 Step 4(미달 보충) 경로만 탄다 — 리별 할당,
+ * 농가별 슬라이스, 대표필지 우선이 한 줄도 실행되지 않는다.
+ *
+ * 실제로 `extractFromRi`의 `slice(0, config.maxPerFarmer)`를 `+5`로 망가뜨려도
+ * 154건이 전부 통과했다. 여기서 `perRiTarget`을 양수로 줘 그 경로를 연다.
+ */
+describe('extractParcels — 리별 할당(Step 3)과 농가당 상한', () => {
+  // 농가 12곳 × 5필지 = 60건. 12와 4의 배수 관계상 한 농가는 한 리에 모인다
+  // (리마다 농가 3곳 × 5필지 = 15건).
+  const parcels = Array.from({ length: 60 }, (_, i) =>
+    makeParcel({
+      farmerId: `F${i % 12}`,
+      parcelId: `${100 + i}`,
+      ri: `R${i % 4}리`,
+      area: 1000,
+    }),
+  );
+
+  const countByFarmer = (selected: ReturnType<typeof extractParcels>['selectedParcels']) => {
+    const counts = new Map<string, number>();
+    for (const p of selected) counts.set(p.farmerId, (counts.get(p.farmerId) ?? 0) + 1);
+    return counts;
+  };
+
+  it('농가당 상한을 넘겨 뽑지 않는다', () => {
+    const result = extractParcels(
+      parcels,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 5, maxPerFarmer: 2 }),
+    );
+    const counts = countByFarmer(result.selectedParcels);
+    expect(counts.size).toBeGreaterThan(0);
+    expect(Math.max(...counts.values())).toBeLessThanOrEqual(2);
+  });
+
+  it('상한이 1이면 농가마다 최대 한 필지다', () => {
+    const result = extractParcels(
+      parcels,
+      makeConfig({ totalTarget: 12, publicPaymentTarget: 12, perRiTarget: 3, maxPerFarmer: 1 }),
+    );
+    const counts = countByFarmer(result.selectedParcels);
+    expect(Math.max(...counts.values())).toBe(1);
+  });
+
+  it('리별 목표를 넘겨 뽑지 않는다', () => {
+    const result = extractParcels(
+      parcels,
+      makeConfig({
+        totalTarget: 100, // 총 목표를 크게 둬 Step 4 보충이 리별 상한을 덮지 않게 한다
+        publicPaymentTarget: 100,
+        perRiTarget: 2,
+        maxPerFarmer: 5,
+        underfillPolicy: 'skip',
+      }),
+    );
+    const byRi = new Map<string, number>();
+    for (const p of result.selectedParcels) byRi.set(p.ri, (byRi.get(p.ri) ?? 0) + 1);
+    for (const [, count] of byRi) expect(count).toBeLessThanOrEqual(2);
+  });
+
+  it('riTargetOverrides가 리별 목표를 덮는다', () => {
+    const result = extractParcels(
+      parcels,
+      makeConfig({
+        totalTarget: 100,
+        publicPaymentTarget: 100,
+        perRiTarget: 2,
+        riTargetOverrides: { 'R0리': 4 },
+        maxPerFarmer: 5,
+        underfillPolicy: 'skip',
+      }),
+    );
+    const r0 = result.selectedParcels.filter((p) => p.ri === 'R0리').length;
+    expect(r0).toBe(4);
+  });
+});
+
+/**
+ * 검증기를 직접 호출해 시험한다.
+ *
+ * `extractParcels`가 매 호출마다 `validateExtraction`을 돌리므로 커버리지 도구에는
+ * covered로 뜨지만, 결과를 "오류가 비었는지"로만 보면 **검사 자체를 무력화해도
+ * 통과한다.** 실제로 TOTAL_MISMATCH를 `if (false)`로 죽여도 29건이 전부 살아남았다.
+ * 오류가 나와야 하는 입력을 직접 넣어야 검사기가 살아 있는지 알 수 있다.
+ */
+describe('validateExtraction', () => {
+  const config = makeConfig({ totalTarget: 3, publicPaymentTarget: 3, maxPerFarmer: 2 });
+  const riStatsFor = (selected: Parcel[]) => generateRiStats(selected, selected, config);
+
+  it('결과 수가 목표와 같으면 TOTAL_MISMATCH가 없다', () => {
     const selected = [
+      makeParcel({ farmerId: 'F1', parcelId: '1' }),
+      makeParcel({ farmerId: 'F2', parcelId: '2' }),
+      makeParcel({ farmerId: 'F3', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(false);
+  });
+
+  /**
+   * 목표와의 차이가 **10 이하면 경고, 11 이상이면 오류**다
+   * (`extractionAlgorithm.ts:577`의 `Math.abs(...) > 10`).
+   * 이 임계값은 코드 한 줄에만 있고 화면에도 문서에도 없다. 여기서 못박는다 —
+   * 담당자가 "몇 개까지 어긋나도 되는가"를 물으면 답이 이 숫자다.
+   */
+  it('목표와의 차이가 10 이하면 경고로만 남긴다', () => {
+    const selected = [makeParcel({ farmerId: 'F1', parcelId: '1' })]; // 목표 3, 차이 2
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.warnings.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(true);
+    expect(v.errors.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(false);
+  });
+
+  it('목표와의 차이가 10을 넘으면 오류로 올린다', () => {
+    // 목표 3, 결과 14 → 차이 11. 농가를 전부 다르게 해 FARMER_OVER_LIMIT과 섞이지 않게 한다
+    const selected = Array.from({ length: 14 }, (_, i) =>
+      makeParcel({ farmerId: `F${i}`, parcelId: `${i}` }),
+    );
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(true);
+    expect(v.isValid).toBe(false);
+  });
+
+  /**
+   * 대표필지는 총 목표 '안에' 들어가므로 호출자가 실제 기준을 넘긴다.
+   * 이 옵션이 무시되면 대표필지를 병합한 결과가 늘 목표와 어긋난 것으로 보고된다.
+   */
+  it('options.totalTarget이 config보다 우선한다', () => {
+    const selected = [makeParcel({ farmerId: 'F1', parcelId: '1' })];
+    // config.totalTarget(3)으로 보면 어긋나지만, 호출자가 넘긴 1을 기준으로 삼아야 한다
+    const v = validateExtraction(selected, config, riStatsFor(selected), { totalTarget: 1 });
+    expect(v.errors.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(false);
+    expect(v.warnings.some((e) => e.code === 'TOTAL_MISMATCH')).toBe(false);
+  });
+
+  it('한 농가가 상한을 넘으면 FARMER_OVER_LIMIT을 낸다', () => {
+    const selected = [
+      makeParcel({ farmerId: 'F1', parcelId: '1' }),
+      makeParcel({ farmerId: 'F1', parcelId: '2' }),
+      makeParcel({ farmerId: 'F1', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'FARMER_OVER_LIMIT')).toBe(true);
+  });
+
+  /**
+   * 면제는 카테고리가 아니라 키로 받는다. `parcelCategory === 'representative'`가
+   * 사용자 지정 필지·알고리즘이 고른 대체분·이미 슬라이스를 거친 필지를 모두 싸잡기
+   * 때문이고, 면제는 사용자가 직접 지정한 것에만 줘야 한다.
+   */
+  it('exemptFarmerLimitKeys로 지정한 필지는 농가 상한 계산에서 뺀다', () => {
+    const over = [
+      makeParcel({ farmerId: 'F1', parcelId: '1' }),
+      makeParcel({ farmerId: 'F1', parcelId: '2' }),
+      makeParcel({ farmerId: 'F1', parcelId: '3' }),
+    ];
+    const exempt = new Set([parcelMatchKey(over[2])]);
+    const v = validateExtraction(over, config, riStatsFor(over), {
+      exemptFarmerLimitKeys: exempt,
+    });
+    expect(v.errors.some((e) => e.code === 'FARMER_OVER_LIMIT')).toBe(false);
+  });
+
+  it('기채취 이력이 있는 필지가 섞이면 SAMPLED_INCLUDED를 낸다', () => {
+    const selected = [
+      makeParcel({ farmerId: 'F1', parcelId: '1' }),
+      makeParcel({ farmerId: 'F2', parcelId: '2' }),
+      makeParcel({ farmerId: 'F3', parcelId: '3', sampledYears: [2025] }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'SAMPLED_INCLUDED')).toBe(true);
+  });
+
+  it('기채취 이력이 없으면 SAMPLED_INCLUDED가 없다', () => {
+    const selected = [
+      makeParcel({ farmerId: 'F1', parcelId: '1' }),
+      makeParcel({ farmerId: 'F2', parcelId: '2' }),
+      makeParcel({ farmerId: 'F3', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'SAMPLED_INCLUDED')).toBe(false);
+  });
+});
+
+describe('generateRiStats / generateFarmerStats', () => {
+  // 인자 순서가 (전체, 선택)이다. 둘 다 같은 배열을 넘기면 전수 선택된 상황이라
+  // 두 인자가 뒤바뀌어도 통과해 버린다 — 서로 다른 배열로 구분해서 검증한다.
+  it('리별로 전체 수와 선택 수를 각각 센다', () => {
+    const all = [
       makeParcel({ ri: 'A리', parcelId: '1' }),
       makeParcel({ ri: 'A리', parcelId: '2' }),
-      makeParcel({ ri: 'B리', parcelId: '3' }),
+      makeParcel({ ri: 'A리', parcelId: '3' }),
+      makeParcel({ ri: 'B리', parcelId: '4' }),
     ];
-    const stats = generateRiStats(selected, selected, makeConfig());
-    const byRi = Object.fromEntries(stats.map((s) => [s.ri, s.selectedCount]));
-    expect(byRi['A리']).toBe(2);
-    expect(byRi['B리']).toBe(1);
+    const selected = [all[0], all[1], all[3]];
+    const stats = generateRiStats(all, selected, makeConfig());
+    const byRi = Object.fromEntries(stats.map((s) => [s.ri, s]));
+    expect(byRi['A리'].selectedCount).toBe(2);
+    expect(byRi['B리'].selectedCount).toBe(1);
+    expect(byRi['A리'].totalCount).toBe(3);
   });
 
   it('농가별로 선택 수를 센다', () => {
