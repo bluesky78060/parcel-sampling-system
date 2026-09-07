@@ -25,9 +25,14 @@ export function ReviewPage() {
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'public-payment' | 'representative'>('all');
   const [selectedMarkerParcel, setSelectedMarkerParcel] = useState<Parcel | null>(null);
   const [showDistanceCircle, setShowDistanceCircle] = useState(false);
-  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+  // 지도에는 추출된 필지만 올린다. 전량(마스터 4만 건)을 올리면 마커를 그것만큼
+  // 만드느라 탭 진입이 수 초 걸린다 — 정작 검토 대상은 선정된 700건이다.
+  // 전체를 보려면 "추출 선택만" 체크를 끈다.
+  const [showSelectedOnly, setShowSelectedOnly] = useState(true);
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [showPolygons, setShowPolygons] = useState(true);
+  // 필지 영역(VWorld 폴리곤)은 팬할 때마다 다시 조회·매칭하므로 기본은 끈다.
+  // 줌 15 이상에서만 그려지기도 해서, 켜 두면 초기 화면에서는 비용만 들고 안 보인다.
+  const [showPolygons, setShowPolygons] = useState(false);
 
   // 좌표 변환 (지도 탭에서 좌표 없을 때 사용)
   const geocoding = useGeocoding();

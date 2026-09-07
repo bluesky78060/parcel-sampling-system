@@ -135,9 +135,13 @@ export function KakaoMap({
           <div className="bg-white/90 backdrop-blur border border-gray-300 rounded-lg px-6 py-4 text-center shadow-lg pointer-events-auto">
             <p className="text-sm font-semibold text-gray-700 mb-1">표시할 마커가 없습니다</p>
             <p className="text-xs text-gray-500">
-              {noCoordsCount > 0
-                ? '데이터 분석 페이지에서 "좌표 변환" 버튼을 클릭하여 좌표를 생성하세요.'
-                : '필지 좌표가 봉화군 범위 밖이거나 필터 조건에 맞는 필지가 없습니다.'}
+              {/* 미선택이 숨겨진 것이 원인일 때 엉뚱한 안내를 하지 않는다 —
+                  좌표를 다시 변환하라고 하면 사용자가 4만 건을 또 돌린다 */}
+              {markerCounts.unselected > 0 && !showUnselected
+                ? `미선택 필지 ${markerCounts.unselected.toLocaleString()}건이 숨겨져 있습니다. 위의 "미선택 필지 표시"를 켜세요.`
+                : noCoordsCount > 0
+                  ? '데이터 분석 페이지에서 "좌표 변환" 버튼을 클릭하여 좌표를 생성하세요.'
+                  : '필지 좌표가 봉화군 범위 밖이거나 필터 조건에 맞는 필지가 없습니다.'}
             </p>
           </div>
         </div>

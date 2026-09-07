@@ -14,7 +14,12 @@ import {
 export interface MarkerCounts {
   selected: number;
   representative: number;
+  /**
+   * 미선택 필지 수. `showUnselected`가 꺼져 있으면 이들은 **마커로 만들어지지 않는다** —
+   * 숫자는 "지도에 올릴 수 있는 미선택 필지가 이만큼 있다"는 뜻이다.
+   */
   unselected: number;
+  /** 실제로 지도에 올린 마커 수. 숨겨진 미선택 필지는 포함하지 않는다. */
   total: number;
 }
 
@@ -53,7 +58,10 @@ function createParcelMarker(
     icon,
     zIndexOffset: isSelected ? 1000 : (isRep ? 500 : 0),
   });
-  marker.bindPopup(createPopupContent(parcel, isSelected));
+  // 팝업 내용을 **열 때** 만든다. 미리 만들면 열지도 않을 HTML이 마커마다 힙에
+  // 남는다 — 4만 건 기준 실측 38MB다. Leaflet은 bindPopup에 함수를 받으므로
+  // 지연 생성이 그대로 지원된다.
+  marker.bindPopup(() => createPopupContent(parcel, isSelected));
 
   marker.on('click', () => {
     map.flyTo(latlng, 17, { duration: 0.8 });
@@ -201,9 +209,23 @@ export function useMarkerLayer({
       }
 
       const isSelected = selectedKeys.has(parcelKey(parcel));
+      const isRep = isRepresentative(parcel);
+
+      // 미선택 마커는 `showUnselected`가 켜져 있을 때만 만든다.
+      //
+      // 예전에는 무조건 만들어 `unselectedMarkersRef`에 넣고, 그 레이어를 지도에서
+      // 떼는 방식이었다. 그런데 레이어가 이미 지도에 붙어 있어서 addLayer 시점에
+      // Leaflet이 실제 DOM을 만들었고, 곧바로 통째로 버렸다. 즉 체크박스를 꺼 두어도
+      // 비용은 전액 지불하고 화면에는 안 나왔다.
+      //
+      // 카운트는 마커 없이도 세야 하므로 여기서 세고 넘어간다.
+      if (!isRep && !isSelected && !showUnselected) {
+        countUnselected++;
+        continue;
+      }
+
       const color = getMarkerColor(parcel, isSelected);
       const latlng: L.LatLngTuple = [lat, lng];
-      const isRep = isRepresentative(parcel);
 
       const marker = createParcelMarker(parcel, latlng, color, isRep, isSelected, map, circleRef, showDistanceCircleRef, onMarkerClickRef);
 
@@ -234,7 +256,9 @@ export function useMarkerLayer({
       selected: countSelected,
       representative: countRep,
       unselected: countUnselected,
-      total: countSelected + countRep + countUnselected,
+      // 숨긴 미선택 필지는 마커를 만들지 않았으므로 총계에서 뺀다.
+      // 넣으면 배지가 "마커 40,809"라고 하는데 화면에는 700개만 있게 된다.
+      total: countSelected + countRep + (showUnselected ? countUnselected : 0),
     });
 
     toggleUnselectedLayer(map, unselectedMarkersRef.current, showUnselected);
