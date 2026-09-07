@@ -4,42 +4,98 @@
  * 예전에는 마커를 다시 그릴 때마다 `fitBounds`를 걸었다. 그래서 사용자가 지도를
  * 확대해 특정 필지를 보고 있다가 체크박스 하나만 눌러도 화면이 전체 범위로
  * 튕겨 돌아왔다. 마커가 4만 개일 때는 느려서 조작 자체를 안 했기 때문에 드러나지
- * 않았고, 700개로 줄여 조작이 가능해지자 바로 문제가 됐다(PROJ1-1-32 → PROJ1-1-35).
+ * 않았고, 700개로 줄여 조작이 가능해지자 바로 문제가 됐다(PROJ1-1-32 → PROJ1-1-36).
  *
- * 판정을 훅 밖으로 뺀 이유: 조건이 넷이고 서로 미묘하게 다르다.
+ * 판정을 훅 밖으로 뺀 이유: 조건이 여럿이고 서로 미묘하다.
  * Leaflet DOM이 필요한 훅 안에 두면 회귀를 기계적으로 잡을 수 없다.
  */
 
+/** 지도 카테고리 필터. 훅의 prop 타입과 같은 유니온을 유지한다 — `string`으로 넓히면 오타가 조용히 통과한다. */
+export type MapCategoryFilter = 'all' | 'public-payment' | 'representative';
+
 export interface MapFitState {
-  /** 선택된 리 필터. `undefined`는 전체다 */
+  /** 선택된 리 필터. `undefined`와 `''`는 모두 "전체"로 같게 본다 */
   filterRi?: string;
   /** 선택된 카테고리 필터 */
-  categoryFilter?: string;
+  categoryFilter?: MapCategoryFilter;
   /** 이 시점에 지도에 실제로 올라간 마커가 하나라도 있었는가 */
   hadMarkers: boolean;
+  /** 올라간 마커 중 **현재 화면 안**에 든 것이 하나라도 있는가 */
+  anyMarkerInView: boolean;
+}
+
+/**
+ * 빈 문자열과 `undefined`를 같은 "전체"로 본다.
+ *
+ * 현재 유일한 호출부(`ReviewPage`)가 `filterRi || undefined`로 정규화해 넘기지만,
+ * 타입은 `''`을 허용한다. 두 번째 호출부가 생겨 그대로 넘기면 `'' !== undefined`가
+ * 참이 되어 **필터를 만진 적도 없는데 화면이 맞춰진다.** 여기서 막는다.
+ */
+const normalizeRi = (value?: string): string | undefined => value || undefined;
+
+/**
+ * 마커 렌더 결과로부터 판정 상태를 만든다.
+ *
+ * `hadMarkers`를 훅에서 직접 조립하면 그 산식(`renderedCount > 0`)을 아무도 검증하지
+ * 않는다 — 실제로 `hadMarkers: true`로 고정해 버리는 변이가 테스트를 전부 통과했다.
+ */
+export function deriveFitState(input: {
+  filterRi?: string;
+  categoryFilter?: MapCategoryFilter;
+  renderedCount: number;
+  anyMarkerInView: boolean;
+}): MapFitState {
+  return {
+    filterRi: input.filterRi,
+    categoryFilter: input.categoryFilter,
+    hadMarkers: input.renderedCount > 0,
+    anyMarkerInView: input.anyMarkerInView,
+  };
 }
 
 /**
  * 자동으로 화면을 맞춰야 하는가.
  *
- * 맞추는 경우는 셋뿐이다.
+ * 맞추는 경우는 넷이다.
  *
  * | 상황 | 근거 |
  * |---|---|
  * | 첫 진입 (`last === null`) | 어디를 봐야 할지 아직 모른다 |
  * | 리·카테고리 필터 변경 | 사용자가 "다른 것을 보겠다"고 명시한 것이다 |
  * | 마커가 없다가 생김 | 좌표 변환이 끝난 경우다. 빈 화면을 그대로 둘 수 없다 |
+ * | 마커는 있는데 화면 안에 하나도 없음 | 빈 지도에 "마커 700" 배지만 뜨는 모순을 막는다 |
  *
  * 반대로 표시 토글(미선택 표시·1km 반경), 조사 연도 변경, 필지 선택 해제로는
  * 움직이지 않는다. 그것들은 "보는 대상"이 아니라 **보는 방식**을 바꾸는 조작이라,
  * 사용자가 맞춰 둔 화면을 유지해야 작업을 이어갈 수 있다.
  *
- * 마커가 있다가 없어진 경우도 움직이지 않는다 — 맞출 대상이 없기도 하고,
+ * 마지막 규칙이 세 가지 빈틈을 함께 덮는다.
+ * - "추출 선택만"을 다시 켰을 때 그 700건이 현재 뷰포트 밖에 있는 경우
+ * - 좌표 변환이 부분 성공해 재시도했을 때 새 마커가 화면 밖에 생기는 경우
+ * - 전체화면을 축소해 마커가 화면 밖으로 밀려나는 경우
+ *
+ * 마커가 있다가 없어진 경우는 움직이지 않는다 — 맞출 대상이 없기도 하고,
  * 필터를 되돌렸을 때 원래 보던 자리로 돌아오는 편이 낫다.
  */
 export function shouldAutoFit(last: MapFitState | null, current: MapFitState): boolean {
   if (last === null) return true;
-  if (last.filterRi !== current.filterRi) return true;
+  if (normalizeRi(last.filterRi) !== normalizeRi(current.filterRi)) return true;
   if (last.categoryFilter !== current.categoryFilter) return true;
-  return !last.hadMarkers && current.hadMarkers;
+  if (!last.hadMarkers && current.hadMarkers) return true;
+  return current.hadMarkers && !current.anyMarkerInView;
+}
+
+/**
+ * 판정과 상태 갱신을 한 번에 돌려준다.
+ *
+ * 갱신을 호출부에 맡기면 `if (fit)` 안으로 들어가는 실수가 난다. 그러면
+ * `hadMarkers`의 false→true 전이를 놓쳐 "좌표 변환이 끝나면 맞춘다"는 규칙이
+ * 조용히 죽는다 — 그 변이가 실제로 테스트를 전부 통과했다.
+ * `next`를 조건과 무관하게 돌려주어 그 실수를 구조적으로 막는다.
+ */
+export function reduceFit(
+  prev: MapFitState | null,
+  current: MapFitState,
+): { fit: boolean; next: MapFitState } {
+  return { fit: shouldAutoFit(prev, current), next: current };
 }

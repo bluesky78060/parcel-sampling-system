@@ -113,10 +113,10 @@ export function KakaoMap({
           type="button"
           onClick={fitToMarkers}
           disabled={markerCounts.total === 0}
-          title="지도에 있는 마커가 모두 보이도록 화면을 맞춥니다"
+          title="지도에 있는 마커가 모두 보이도록 화면을 맞춥니다 (표시 대상은 바뀌지 않습니다)"
           className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm text-gray-700 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
         >
-          전체 보기
+          화면 맞춤
         </button>
         <div className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm">
           <label className="flex items-center gap-1.5 cursor-pointer select-none">
