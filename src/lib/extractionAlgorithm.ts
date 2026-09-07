@@ -11,7 +11,8 @@ import type {
 } from '../types';
 import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance, meanPlusTwoSigma } from './spatialUtils';
 import { parseNumericCell } from './excelParser';
-import { parcelMatchKey, parcelFarmerKey } from './parcelKey';
+import { parcelMatchKey, parcelFarmerKey, hasFarmerId, farmerGroupKey } from './parcelKey';
+import { isRepresentative } from './parcelCategory';
 
 /**
  * 실지목 우선, 없으면 공부지목, 둘 다 없으면 '미분류'
@@ -87,13 +88,13 @@ function shuffle<T>(array: T[], rng: () => number): T[] {
 /**
  * 배열을 키 기준으로 그룹핑
  */
-function groupBy<T>(array: T[], keyFn: (item: T) => string): Record<string, T[]> {
+function groupBy<T>(array: T[], keyFn: (item: T, index: number) => string): Record<string, T[]> {
   const groups: Record<string, T[]> = {};
-  for (const item of array) {
-    const key = keyFn(item);
+  array.forEach((item, index) => {
+    const key = keyFn(item, index);
     if (!groups[key]) groups[key] = [];
     groups[key].push(item);
-  }
+  });
   return groups;
 }
 
@@ -284,7 +285,9 @@ function extractFromRi(
   const repKeys = config.repParcelKeys;
 
   // 농가별 그룹핑 → 농가당 최대 제한 적용 (대표필지는 우선 포함)
-  const farmerGroups = groupBy(parcels, p => p.farmerId);
+  // 경영체번호가 빈 필지는 행마다 고유 키를 받아 서로 묶이지 않는다.
+  // 묶이면 상한이 그 전체에 걸려 무관한 필지 수십 건이 한꺼번에 사라진다.
+  const farmerGroups = groupBy(parcels, farmerGroupKey);
   const pool: Parcel[] = [];
   for (const farmerParcels of Object.values(farmerGroups)) {
     if (repKeys && repKeys.size > 0) {
@@ -458,8 +461,10 @@ export function extractParcels(
     for (const [suppRi, riParcels] of sortedRis) {
       if (selected.length >= config.totalTarget) break;
 
+      // 농가가 식별되는 필지만 센다. 농가 미상끼리는 상한을 공유하지 않는다.
       const farmerCounts: Record<string, number> = {};
       for (const s of selected) {
+        if (!hasFarmerId(s)) continue;
         farmerCounts[s.farmerId] = (farmerCounts[s.farmerId] ?? 0) + 1;
       }
 
@@ -468,8 +473,9 @@ export function extractParcels(
       const supplemented = extractWithDensityOrShuffle(riParcels, config, rng, suppRepCoords);
       for (const p of supplemented) {
         if (selected.length >= config.totalTarget) break;
-        const currentCount = farmerCounts[p.farmerId] ?? 0;
-        if (currentCount >= config.maxPerFarmer) continue;
+        const identified = hasFarmerId(p);
+        const currentCount = identified ? (farmerCounts[p.farmerId] ?? 0) : 0;
+        if (identified && currentCount >= config.maxPerFarmer) continue;
 
         if (useSpatialFilter && p.coords && selected.some(s => s.coords && s.ri === p.ri)) {
           const sameRiSelected = selected.filter(s => s.ri === p.ri && s.coords != null);
@@ -480,7 +486,7 @@ export function extractParcels(
         }
 
         selected.push(p);
-        farmerCounts[p.farmerId] = currentCount + 1;
+        if (identified) farmerCounts[p.farmerId] = currentCount + 1;
       }
     }
   }
@@ -530,7 +536,10 @@ export function generateRiStats(
  * 농가별 통계 생성
  */
 export function generateFarmerStats(selectedParcels: Parcel[]): FarmerStat[] {
-  const byFarmer = groupBy(selectedParcels, p => p.farmerId);
+  // 경영체번호가 없는 필지는 뺀다. 묶으면 `farmerId: ''`라는 존재하지 않는 농가가
+  // 통계에 나타나고, 그 건수가 실제 농가들과 나란히 표시된다.
+  // 빠진 필지 수는 `validateExtraction`의 FARMER_ID_MISSING 경고가 알린다.
+  const byFarmer = groupBy(selectedParcels.filter(hasFarmerId), p => p.farmerId);
 
   return Object.entries(byFarmer).map(([farmerId, parcels]) => ({
     farmerId,
@@ -585,9 +594,48 @@ export function validateExtraction(
   // 사용자가 직접 지정해 넣은 필지는 농가별 슬라이스를 거치지 않고 추가되므로
   // 이 제한으로 재면 고칠 방법이 없는 오류가 뜬다. 그 키만 면제한다.
   const exempt = options?.exemptFarmerLimitKeys;
-  const farmerLimitTargets = exempt
+  // 경영체번호가 없는 필지가 결과에 있으면 알린다.
+  //
+  // 이 필지들은 농가당 제한 계산과 농가별 통계에서 빠진다. 그 사실을 말해주지 않으면
+  // 사용자는 "왜 이 리에서 필지가 안 뽑히나", "왜 농가 통계 합이 안 맞나"를 물어도
+  // 단서를 찾을 수 없다. 원인은 코드가 아니라 **원본 파일의 빈 셀**이다.
+  const missingFarmerId = selectedParcels.filter(p => !hasFarmerId(p));
+  if (missingFarmerId.length > 0) {
+    // 원인을 나눠 알린다. "원본 파일의 빈 셀을 확인하라"고만 하면 사용자가 마스터를
+    // 아무리 훑어도 못 찾는 경우가 있다 — **대표필지 파일은 경영체번호 컬럼 매핑
+    // 자체가 선택**이라(`ColumnMapper`), 컬럼이 없으면 전 행이 빈 값이 된다.
+    // 그리고 마스터와 매칭되지 않은 대표필지는 보충 없이 그대로 남는다.
+    const repCount = missingFarmerId.filter(isRepresentative).length;
+    const masterCount = missingFarmerId.length - repCount;
+    const ris = [...new Set(missingFarmerId.map(p => p.ri))];
+
+    const causes: string[] = [];
+    if (masterCount > 0) {
+      causes.push(`마스터 ${masterCount}건 — 원본 파일의 경영체번호 컬럼에 빈 셀이 있습니다`);
+    }
+    if (repCount > 0) {
+      causes.push(
+        `대표필지 ${repCount}건 — 대표필지 파일은 경영체번호 컬럼이 없어도 되며, ` +
+        '마스터와 매칭된 필지는 자동으로 채워집니다. 매칭되지 않은 것들입니다',
+      );
+    }
+
+    warnings.push({
+      code: 'FARMER_ID_MISSING',
+      message: `경영체번호가 비어 있는 필지 ${missingFarmerId.length}건이 결과에 있습니다`,
+      details:
+        '농가당 제한 계산과 농가별 통계에서 제외됩니다. ' +
+        causes.join(' / ') +
+        `. 해당 리: ${ris.slice(0, 5).join(', ')}${ris.length > 5 ? ' 외' : ''}`,
+    });
+  }
+
+  // 농가가 식별되는 필지만 센다. 빈 경영체번호를 한 농가로 묶으면 `farmerCounts['']`가
+  // 누적돼, 서로 무관한 필지 때문에 고칠 방법이 없는 FARMER_OVER_LIMIT이 뜬다.
+  const farmerLimitTargets = (exempt
     ? selectedParcels.filter(p => !exempt.has(parcelMatchKey(p)))
-    : selectedParcels;
+    : selectedParcels
+  ).filter(hasFarmerId);
   const farmerCounts: Record<string, number> = {};
   for (const p of farmerLimitTargets) {
     farmerCounts[p.farmerId] = (farmerCounts[p.farmerId] ?? 0) + 1;
