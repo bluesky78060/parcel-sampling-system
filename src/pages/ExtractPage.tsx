@@ -11,6 +11,8 @@ import { ExtractionSettings } from '../components/Extraction/ExtractionSettings'
 import { SpatialSettings } from '../components/Extraction/SpatialSettings';
 import { RiTargetTable } from '../components/Extraction/RiTargetTable';
 import { LandCategorySettings } from '../components/Extraction/LandCategorySettings';
+import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { parcelMatchKey } from '../lib/parcelKey';
 
 export function ExtractPage() {
   const navigate = useNavigate();
@@ -102,14 +104,14 @@ export function ExtractPage() {
     // 대표필지 키 집합 생성
     const repKeys = new Set<string>();
     for (const p of representativeParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      const key = parcelMatchKey(p);
       if (key) repKeys.add(key);
     }
 
     // 공익직불제 필지 중 대표필지와 겹치는 키 찾기
     const dupKeys = new Set<string>();
     for (const p of allParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      const key = parcelMatchKey(p);
       if (key && repKeys.has(key)) dupKeys.add(key);
     }
 
@@ -119,13 +121,14 @@ export function ExtractPage() {
   // 추출 결과 요약 — 공익직불제 ↔ 대표필지 겹침을 1건으로 계산한 고유 필지 수
   const resultSummary = useMemo(() => {
     const parcels = result?.selectedParcels ?? [];
-    const repSelected = parcels.filter(
-      (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
-    ).length;
+    // 공익 수를 `총 − 대표`로 유도하지 않는다. 공익 추출에도 뽑힌 대표필지('both')는
+    // 양쪽에 다 세어야 하므로 두 수의 합이 총계와 같다는 가정이 성립하지 않는다.
+    const repSelected = parcels.filter(isRepresentative).length;
+    const publicSelected = parcels.filter(isPublicPayment).length;
     const unique = countUniqueSelected(parcels);
     return {
       unique,
-      publicSelected: parcels.length - repSelected,
+      publicSelected,
       repSelected,
       dupCount: parcels.length - unique,
     };
@@ -193,7 +196,7 @@ export function ExtractPage() {
             <div>
               <span className="text-emerald-600">추출 포함 목표</span>
               <p className="font-semibold text-emerald-900">
-                {config.representativeTarget > 0 ? `${config.representativeTarget}개` : `전부 (${repCount}개)`}
+                {config.representativeTarget > 0 ? `${config.representativeTarget}개` : '적격 전부'}
               </p>
             </div>
             <div>
@@ -201,6 +204,20 @@ export function ExtractPage() {
               <p className="font-semibold text-emerald-900">{config.publicPaymentTarget}개</p>
             </div>
           </div>
+
+          {/* 상한이 실제로 필지를 잘라내므로 결과를 숫자로 보여준다. 콘솔에만 남기면
+              "올린 대표필지가 왜 다 안 들어갔나"를 알 길이 없다 */}
+          {result?.representativeSummary && (
+            <p className="mt-2 text-xs text-emerald-700">
+              지난 추출: 업로드 {result.representativeSummary.uploaded}건 → 적격 {result.representativeSummary.eligible}건
+              {result.representativeSummary.limited < result.representativeSummary.eligible &&
+                ` → 상한(${result.representativeSummary.cap}) 적용 ${result.representativeSummary.limited}건`}
+              {result.representativeSummary.supplemented > 0 &&
+                ` + 부적격 대체 ${result.representativeSummary.supplemented}건`}
+              {result.representativeSummary.supplementShortfall > 0 &&
+                ` (대체 부족 ${result.representativeSummary.supplementShortfall}건)`}
+            </p>
+          )}
 
           {/* 중복 안내 */}
           {duplicates.count > 0 && (
@@ -253,13 +270,14 @@ export function ExtractPage() {
               <div className="flex items-center gap-2 flex-wrap font-semibold mb-1">
                 <span>
                   추출 결과: {resultSummary.unique.toLocaleString()}필지 선택
-                  {resultSummary.dupCount > 0 && (
-                    <span className="font-normal">
-                      {' '}(공익직불제 {resultSummary.publicSelected.toLocaleString()}
-                      {' + '}대표필지 {resultSummary.repSelected.toLocaleString()}, 결과에 두 번 실림{' '}
-                      {resultSummary.dupCount.toLocaleString()}건)
-                    </span>
-                  )}
+                  {/* 항상 보여준다. 예전에는 dupCount > 0일 때만 렌더했는데, dedupe가 병합
+                      직후로 옮겨진 뒤로는 그 조건이 구조적으로 거짓이라 죽은 분기였다 */}
+                  <span className="font-normal">
+                    {' '}(공익직불제 {resultSummary.publicSelected.toLocaleString()}
+                    {' · '}대표필지 {resultSummary.repSelected.toLocaleString()}
+                    {resultSummary.dupCount > 0 &&
+                      `, 결과에 두 번 실림 ${resultSummary.dupCount.toLocaleString()}건`})
+                  </span>
                 </span>
                 {result.validation.isValid ? (
                   <span className="text-green-600">검증 통과</span>

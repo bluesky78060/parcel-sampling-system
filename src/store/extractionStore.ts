@@ -2,16 +2,48 @@ import { create } from 'zustand';
 import type { ExtractionConfig, ExtractionResult, Parcel, SpatialConfig, ValidationResult } from '../types';
 import { extractParcels, getParcelArea, validateExtraction, generateRiStats, generateFarmerStats, MIN_AREA } from '../lib/extractionAlgorithm';
 import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
-
-/** 필지 매칭 키: PNU 또는 주소+필지번호 (excelExporter.getParcelKey와 동일 공식) */
-const matchKey = (p: Parcel) => p.pnu || `${p.address}__${p.parcelId}`;
+import { isRepresentative, markAsRepresentative } from '../lib/parcelCategory';
+import { parcelMatchKey, parcelFarmerKey } from '../lib/parcelKey';
 
 /**
- * 경영체번호 기반 보조 키. 대표필지 파일에는 경영체번호가 없을 수 있는데,
- * 빈 값끼리 매칭시키면 무관한 필지가 같은 필지로 취급되므로 키 자체를 만들지 않는다.
+ * 대표필지를 상한만큼 리별로 고르게 남긴다.
+ *
+ * 예전에는 `representativeTarget`을 아무도 읽지 않아 적격 대표필지가 **전부** 들어갔다.
+ * 그것이 공익 목표를 넘으면 초과분 제거가 비대표만 걷어내므로, 적격 대표가 목표보다
+ * 많으면 **결과가 전원 대표필지**가 됐다(공익 800 / 대표 260 설정에서 실제로 그랬다).
+ *
+ * 앞에서부터 자르면 파일 순서에 따라 특정 리에 몰린다. 리별 라운드로빈으로 뽑아
+ * 공간 분포를 유지한다.
  */
-const farmerKey = (p: Parcel): string | null =>
-  p.farmerId ? `${p.farmerId}_${p.parcelId}` : null;
+function limitRepresentativesByRi(reps: Parcel[], limit: number): Parcel[] {
+  if (limit <= 0 || reps.length <= limit) return reps;
+
+  const byRi = new Map<string, Parcel[]>();
+  for (const p of reps) {
+    if (!byRi.has(p.ri)) byRi.set(p.ri, []);
+    byRi.get(p.ri)!.push(p);
+  }
+
+  const picked: Parcel[] = [];
+  const queues = [...byRi.values()];
+  let cursor = 0;
+  // 각 리에서 한 건씩 돌아가며 뽑는다. 모든 큐가 비면 종료(무한루프 방지).
+  while (picked.length < limit) {
+    let progressed = false;
+    for (let i = 0; i < queues.length && picked.length < limit; i++) {
+      const q = queues[(cursor + i) % queues.length];
+      const item = q.shift();
+      if (item) { picked.push(item); progressed = true; }
+    }
+    if (!progressed) break;
+    cursor++;
+  }
+  return picked;
+}
+
+// 키 공식은 lib/parcelKey 하나만 쓴다 — 예전에 네 곳에 복제돼 있었다
+const matchKey = parcelMatchKey;
+const farmerKey = parcelFarmerKey;
 
 /** 결과 배열에서 겹치는 필지를 1건으로 접은 배열 (공익직불제 행을 우선 보존) */
 export function dedupeSelected(parcels: Parcel[]): Parcel[] {
@@ -192,16 +224,30 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         if (fk) masterByFarmerKey.set(fk, p);
       }
 
+      // 리 표기는 파일마다 다를 수 있다("봉화읍 내성리" / "내성리"). 마지막 토큰으로 비교한다.
+      // 한쪽이 비어 있으면 판단을 유보한다(빈 리로 걸러 버리면 보충이 통째로 끊긴다).
+      const riTail = (ri: string) => ri.trim().split(/\s+/).pop() ?? '';
+      const sameRi = (a: string, b: string) => !a || !b || riTail(a) === riTail(b);
+
       let enrichedCount = 0;
       const enrichedEligibleRep = eligibleRep.map(rep => {
         const repFk = farmerKey(rep);
-        const pub = masterByKey.get(matchKey(rep))
+        // 같은 필지를 가리키는 마스터 행. 경영체번호+지번 폴백에서도 리를 본다 —
+        // 안 보면 farmerKey에 ri를 넣은 보호가 여기서 우회된다: 다른 리의 같은 지번이
+        // 매칭되고 그 PNU가 대표필지 행에 기입되어 제출 파일로 나간다.
+        const sameParcel = masterByKey.get(matchKey(rep))
           // 경영체번호가 없으면 PNU/주소 매칭만 쓴다 — 빈 값 폴백은 오매칭을 부른다
           || (repFk ? masterByFarmerKey.get(repFk) : undefined)
           || (rep.farmerId
-            ? allParcels.find(p => p.farmerId === rep.farmerId && p.parcelId === rep.parcelId)
-              || allParcels.find(p => p.farmerId === rep.farmerId)
+            ? allParcels.find(p =>
+                p.farmerId === rep.farmerId && p.parcelId === rep.parcelId && sameRi(p.ri, rep.ri))
             : undefined);
+        // 같은 농가의 아무 필지 — 경영체 정보만 가져온다. 필지 식별 정보(PNU·좌표·주소)는
+        // 다른 필지의 것이므로 복사하면 엉뚱한 PNU가 실린다.
+        const sameFarmer = !sameParcel && rep.farmerId
+          ? allParcels.find(p => p.farmerId === rep.farmerId)
+          : undefined;
+        const pub = sameParcel ?? sameFarmer;
 
         if (!pub) return rep;
 
@@ -212,6 +258,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         if (pub.farmerId) merged.farmerId = pub.farmerId;
         if (pub.farmerName) merged.farmerName = pub.farmerName;
         if (pub.farmerAddress) merged.farmerAddress = pub.farmerAddress;
+
+        if (!sameParcel) return merged;
 
         // 나머지 필드: 비어있는 경우만 보충
         if (!merged.address && pub.address) merged.address = pub.address;
@@ -244,8 +292,30 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       console.info(`[추출] 대표필지 마스터 매칭: ${enrichedCount}건 / ${eligibleRep.length}건 보충 완료`);
 
+      // 사용자가 지정한 대표필지 수만큼만 남긴다. 여기서 줄여야 추출 알고리즘의
+      // 우선 선택과 이후 병합이 **같은 집합**을 본다. 뒤에서 자르면 알고리즘이 이미
+      // 상한 밖 대표필지를 우선 선택해 자리를 차지한 뒤가 된다.
+      // 좌표 기준점(중심·리별 좌표)보다도 앞이어야 한다. 상한 밖 대표필지까지 넣어
+      // 기준점을 잡으면 결과에 없는 필지 주변으로 공간 필터가 끌린다.
+      // 대표필지는 총 목표 '안에' 들어간다. 대표 목표가 총 목표보다 크면 그 규칙이 깨져
+      // 결과가 전원 대표필지가 된다(공익 200 / 대표 260 → 260건 전부 대표) — 사용자가
+      // 신고한 증상 그대로다. 설정 화면이 두 값을 따로 클램프하므로 여기서 막는다.
+      const publicTarget = config.publicPaymentTarget;
+      let repCap = config.representativeTarget;
+      if (publicTarget > 0 && repCap > publicTarget) {
+        console.warn(`[추출] 대표필지 목표(${repCap})가 총 목표(${publicTarget})보다 큽니다 — 총 목표로 낮춰 적용`);
+        repCap = publicTarget;
+      }
+      const repLimited = limitRepresentativesByRi(enrichedEligibleRep, repCap);
+      if (repLimited.length < enrichedEligibleRep.length) {
+        console.info(
+          `[추출] 대표필지 상한 적용: 적격 ${enrichedEligibleRep.length}건 → ` +
+          `${repLimited.length}건 (설정 ${repCap}, 리별 균등 배분)`
+        );
+      }
+
       // 대표필지 좌표 정보 (추출 우선순위용)
-      const repWithCoords = enrichedEligibleRep.filter(p => p.coords != null);
+      const repWithCoords = repLimited.filter(p => p.coords != null);
       const repCentroid = repWithCoords.length > 0 ? calculateCentroid(repWithCoords) : undefined;
 
       // 리별 대표필지 좌표 매핑
@@ -257,15 +327,13 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       // 대표필지 매칭 키 셋 (추출 알고리즘에서 우선 선택용)
       const repParcelKeys = new Set<string>();
-      for (const p of enrichedEligibleRep) {
+      for (const p of repLimited) {
         repParcelKeys.add(matchKey(p));
         const fk = farmerKey(p);
         if (fk) repParcelKeys.add(fk);
       }
 
       // ── 2. 공익직불제 추출 (대표필지 근처 우선) ──
-      const publicTarget = config.publicPaymentTarget;
-
       const effectiveConfig = {
         ...config,
         totalTarget: publicTarget,
@@ -290,16 +358,19 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 그래서 공익 추출에 이미 뽑힌 대표필지는 **행을 새로 만들지 않고 태깅만** 한다.
       // 예전에는 적격 대표필지 전부를 `repDirect`로 다시 넣어서, 같은 필지가
       // 공익직불제 행과 대표필지 행으로 두 번 실렸다(고유 700인데 화면 730행).
+      // 카테고리를 'representative'로 **덮어쓰지 않는다**. 덮어쓰면 공익직불제 시트에서
+      // 사라져 담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.
+      // 'both'는 두 성격을 동시에 가지므로 양쪽 시트에 모두 실린다.
       const taggedPublic = result.selectedParcels.map(p => {
         const fk = farmerKey(p);
         const isRep = repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
-        return isRep ? { ...p, parcelCategory: 'representative' as const } : p;
+        return isRep ? { ...p, parcelCategory: markAsRepresentative(p.parcelCategory) } : p;
       });
-      const repInPublicCount = taggedPublic.filter(p => p.parcelCategory === 'representative').length;
+      const repInPublicCount = taggedPublic.filter(isRepresentative).length;
 
       // 공익직불제에 뽑히지 않은 적격 대표필지만 추가한다.
       // 고정 관측점이므로 반드시 포함되어야 하고, 그만큼 신규 추출분이 밀려난다.
-      const repNotInPublic = enrichedEligibleRep.filter(p => {
+      const repNotInPublic = repLimited.filter(p => {
         const fk = farmerKey(p);
         return !selectedKeySet.has(matchKey(p)) && !(fk !== null && selectedFarmerKeySet.has(fk));
       });
@@ -310,10 +381,11 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         isSelected: true,
       }));
 
-      console.info(`[추출] 대표필지 처리: 적격 ${enrichedEligibleRep.length}건 — 공익직불제에서 선택됨 ${repInPublicCount}건(태깅만), 별도 추가 ${repDirect.length}건`);
+      console.info(`[추출] 대표필지 처리: 대상 ${repLimited.length}건 — 공익직불제에서 선택됨 ${repInPublicCount}건(태깅만), 별도 추가 ${repDirect.length}건`);
 
       // ── 4. 부적격 대표필지 → 마스터에서 대체 복사 ──
       let repSupplementCount = 0;
+      let repShortage = 0;
       const repSupplements: Parcel[] = [];
 
       if (excludedRepReasons.length > 0) {
@@ -347,9 +419,26 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           sorted = masterCandidates;
         }
 
-        const shortage = excludedRepReasons.length;
+        // 대체 복사도 상한 안에서만 한다. 상한을 적격분에만 걸고 대체분을 부적격 수만큼
+        // 그대로 더하면 대표가 상한을 넘는다(적격 900 + 부적격 100, 상한 260 → 360건).
+        // 상한이 0(전부)이면 예전처럼 부적격 수만큼 채운다.
+        const shortage = repCap > 0
+          ? Math.max(0, Math.min(excludedRepReasons.length, repCap - repLimited.length))
+          : excludedRepReasons.length;
+        repShortage = shortage;
+        if (shortage < excludedRepReasons.length) {
+          console.info(
+            `[추출] 부적격 대표필지 ${excludedRepReasons.length}건 중 상한(${repCap}) 안에서 ${shortage}건만 대체`
+          );
+        }
         for (const p of sorted) {
           if (repSupplements.length >= shortage) break;
+          // 담은 키를 바로 반영한다. 마스터에는 같은 지번이 작물별로 여러 행 있어,
+          // 루프 전에 만든 집합만 보면 그 쌍이 둘 다 담기고 뒤의 dedupe가 하나로 접는다
+          // — 대체 복사 200건이 조용히 100건이 됐고 "대체 부족" 경고도 안 떴다.
+          const k = matchKey(p);
+          if (allUsedKeys.has(k)) continue;
+          allUsedKeys.add(k);
           repSupplements.push({
             ...p,
             parcelCategory: 'representative' as const,
@@ -370,7 +459,10 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 대표필지는 총 목표 '안에' 들어간다. 공익 추출에서 뽑히지 못한 대표필지를
       // 그냥 더하면 목표를 넘으므로, 넘는 만큼 비대표 필지를 덜어내 자리를 만든다.
       // 대표필지는 고정 관측점이라 반드시 포함되어야 하고, 밀려나는 쪽은 신규 추출분이다.
-      const merged = [...taggedPublic, ...repDirect, ...repSupplements];
+      // dedupe를 **먼저** 한다. 예전에는 초과분을 제거해 정확히 목표 행수를 만든 뒤
+      // dedupe를 돌려서, 중복이 있으면 그만큼 목표에 미달했다(700 설정에 680건).
+      // 마스터에는 같은 지번이 작물별로 여러 행 있을 수 있어 중복은 상시 생긴다.
+      const merged = dedupeSelected([...taggedPublic, ...repDirect, ...repSupplements]);
       const overflow = publicTarget > 0 ? merged.length - publicTarget : 0;
 
       let finalParcels = merged;
@@ -388,7 +480,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         // 대표필지는 애초에 후보에 넣지 않으므로 보호된다.
         const riPools = new Map<string, number[]>();
         for (let i = 0; i < merged.length; i++) {
-          if (merged[i].parcelCategory === 'representative') continue;
+          if (isRepresentative(merged[i])) continue;
           const ri = merged[i].ri;
           if (!riPools.has(ri)) riPools.set(ri, []);
           riPools.get(ri)!.push(i);
@@ -400,15 +492,18 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         }));
 
         const dropIdx = new Set<number>();
-        while (dropIdx.size < overflow && pools.length > 0) {
+        // 빈 풀을 실제로 걷어낸다. 예전에는 정렬 키가 `길이 − 목표`라 **목표가 작은
+        // 빈 풀**이 목표가 큰 비어있지 않은 풀보다 앞설 수 있었고, 그때 `break`가
+        // 걸려 아직 뺄 수 있는데도 멈췄다(리별 목표를 다르게 준 경우).
+        let live = pools.filter(x => x.idxs.length > 0);
+        while (dropIdx.size < overflow && live.length > 0) {
           // 목표 대비 초과가 큰 리부터 (동률이면 많이 가진 리부터)
-          pools.sort((a, b) =>
+          live.sort((a, b) =>
             (b.idxs.length - b.target) - (a.idxs.length - a.target) ||
             b.idxs.length - a.idxs.length
           );
-          const top = pools[0];
-          if (top.idxs.length === 0) break;
-          dropIdx.add(top.idxs.pop()!);
+          dropIdx.add(live[0].idxs.pop()!);
+          if (live[0].idxs.length === 0) live = live.filter(x => x.idxs.length > 0);
         }
 
         finalParcels = merged.filter((_, i) => !dropIdx.has(i));
@@ -425,7 +520,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       }
 
       const uniqueCount = countUniqueSelected(finalParcels);
-      const repCount = finalParcels.filter(p => p.parcelCategory === 'representative').length;
+      const repCount = finalParcels.filter(isRepresentative).length;
       console.info(
         `[추출] 최종 ${finalParcels.length}건 (고유 ${uniqueCount}건) — ` +
         `그중 대표필지 ${repCount}건, 신규 추출 ${finalParcels.length - repCount}건`
@@ -436,11 +531,6 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // publicPaymentTarget으로 덮인 목표를 기준으로 계산한 것이다. 화면에는
       // 대표필지까지 병합한 결과가 뜨므로 그대로 두면 "목표 700인데 N개"
       // 경고가 실제 숫자와 어긋난다.
-      // 검증·통계와 화면·엑셀이 서로 다른 배열을 보면 같은 화면에서 숫자가 갈린다.
-      // 하나로 통일한다. matchKey는 마스터에서 고유하지 않으므로(같은 지번을
-      // 작물별로 여러 행 등록) dedupe는 여전히 의미가 있다.
-      finalParcels = dedupeSelected(finalParcels);
-
       // 목표는 공익직불제 목표 그 자체다. 대표필지는 그 안에 들어가므로 더하지 않는다.
       // `config.totalTarget`은 쓰지 않는다 — 사용자가 입력한 두 수의 합이라
       // "대표필지 별도 쿼터"를 전제하는데, 확정된 규칙은 '총 목표 안에 포함'이다.
@@ -472,6 +562,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           riStats: mergedRiStats,
           farmerStats: mergedFarmerStats,
           validation,
+          representativeSummary: {
+            uploaded: allRepParcels.length,
+            eligible: enrichedEligibleRep.length,
+            cap: repCap,
+            limited: repLimited.length,
+            supplemented: repSupplementCount,
+            supplementShortfall: repShortage - repSupplementCount,
+          },
         },
         isRunning: false,
       });

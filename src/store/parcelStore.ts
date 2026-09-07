@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Parcel, Statistics, DuplicateResult } from '../types';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
+import { parcelMatchKey } from '../lib/parcelKey';
 
 interface ParcelStore {
   allParcels: Parcel[];
@@ -53,7 +54,13 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
         sampled2025: sampled2025Count,
         eligibleParcels: eligible.length,
         uniqueRis: riSet.size,
-        canMeetTarget: eligible.length + representativeParcels.length >= totalTarget,
+        // 고유 필지 기준으로 센다. 단순 합산은 대표필지가 마스터와 겹칠 때
+        // 같은 필지를 두 번 세어 "달성 가능"으로 잘못 판정한다 — 분석 화면에서
+        // 가능하다고 보고 진행했다가 추출 후에야 목표 미달을 만난다.
+        canMeetTarget: new Set([
+          ...eligible.map(parcelMatchKey),
+          ...representativeParcels.filter(p => p.isEligible).map(parcelMatchKey),
+        ]).size >= totalTarget,
         representativeParcels: representativeParcels.length,
       },
     });

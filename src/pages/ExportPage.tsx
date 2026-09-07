@@ -4,6 +4,8 @@ import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore, dedupeSelected } from '../store/extractionStore';
 import { useFileStore } from '../store/fileStore';
 import { exportToExcel } from '../lib/excelExporter';
+import { isPublicPayment, isRepresentative } from '../lib/parcelCategory';
+import { parcelMatchKey } from '../lib/parcelKey';
 
 export function ExportPage() {
   const navigate = useNavigate();
@@ -22,12 +24,12 @@ export function ExportPage() {
   const duplicateKeys = useMemo(() => {
     const repKeys = new Set<string>();
     for (const p of representativeParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      const key = parcelMatchKey(p);
       if (key) repKeys.add(key);
     }
     const dupKeys = new Set<string>();
     for (const p of allParcels) {
-      const key = p.pnu || `${p.address}__${p.parcelId}`;
+      const key = parcelMatchKey(p);
       if (key && repKeys.has(key)) dupKeys.add(key);
     }
     return dupKeys;
@@ -60,10 +62,10 @@ export function ExportPage() {
     .slice(0, 10);
 
   const publicPaymentCount = selectedParcels.filter(
-    (p) => (p.parcelCategory ?? 'public-payment') !== 'representative'
+    (p) => isPublicPayment(p)
   ).length;
   const repCount = selectedParcels.filter(
-    (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
+    (p) => isRepresentative(p)
   ).length;
 
   const handleExport = () => {
