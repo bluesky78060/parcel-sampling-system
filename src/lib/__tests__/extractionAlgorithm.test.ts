@@ -324,6 +324,126 @@ describe('extractParcels — 리별 할당(Step 3)과 농가당 상한', () => {
  * 통과한다.** 실제로 TOTAL_MISMATCH를 `if (false)`로 죽여도 29건이 전부 살아남았다.
  * 오류가 나와야 하는 입력을 직접 넣어야 검사기가 살아 있는지 알 수 있다.
  */
+/**
+ * PROJ1-1-30. 마스터 파일이라고 경영체번호가 항상 있는 것은 아니다 —
+ * `ColumnMapper`는 **컬럼의 매핑**만 요구하고 `excelParser`는 빈 셀을 `''`로 만든 뒤
+ * 그 행을 걸러내지 않는다.
+ *
+ * 빈 값을 "같은 농가"로 보면 농가당 상한이 서로 무관한 필지 전체에 한꺼번에 걸려
+ * **수십 건이 후보에서 통째로 사라지고**, 화면에는 원인 없이 리 목표 미달만 뜬다.
+ */
+describe('extractParcels — 경영체번호가 빈 필지', () => {
+  const emptyFarmerParcels = Array.from({ length: 30 }, (_, i) =>
+    makeParcel({ farmerId: '', parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
+  );
+
+  it('농가 미상 필지들이 상한 하나로 묶여 버려지지 않는다', () => {
+    const result = extractParcels(
+      emptyFarmerParcels,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 20, maxPerFarmer: 2 }),
+    );
+    // 묶이면 슬라이스로 2건만 남는다. 각각 별개 농가로 봐야 20건을 채운다.
+    expect(result.selectedParcels).toHaveLength(20);
+  });
+
+  it('경영체번호가 같으면 상한이 정상 적용된다 (대조군)', () => {
+    const sameFarmer = Array.from({ length: 30 }, (_, i) =>
+      makeParcel({ farmerId: 'F1', parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
+    );
+    const result = extractParcels(
+      sameFarmer,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 20, maxPerFarmer: 2 }),
+    );
+    expect(result.selectedParcels).toHaveLength(2);
+  });
+
+  it('빈 경영체번호 때문에 FARMER_OVER_LIMIT이 뜨지 않는다', () => {
+    const result = extractParcels(
+      emptyFarmerParcels,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 20, maxPerFarmer: 2 }),
+    );
+    expect(result.validation.errors.some((e) => e.code === 'FARMER_OVER_LIMIT')).toBe(false);
+  });
+
+  it('경영체번호가 빈 필지가 있으면 원인을 경고로 알린다', () => {
+    const result = extractParcels(
+      emptyFarmerParcels,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 20, maxPerFarmer: 2 }),
+    );
+    const warning = result.validation.warnings.find((w) => w.code === 'FARMER_ID_MISSING');
+    expect(warning).toBeDefined();
+    expect(warning?.message).toContain('20건'); // 결과에 든 수
+    expect(warning?.details).toContain('A리');
+  });
+
+  it('경영체번호가 정상이면 경고하지 않는다', () => {
+    const normal = Array.from({ length: 10 }, (_, i) =>
+      makeParcel({ farmerId: `F${i}`, parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
+    );
+    const result = extractParcels(
+      normal,
+      makeConfig({ totalTarget: 5, publicPaymentTarget: 5, perRiTarget: 5, maxPerFarmer: 2 }),
+    );
+    expect(result.validation.warnings.some((w) => w.code === 'FARMER_ID_MISSING')).toBe(false);
+  });
+
+  /**
+   * 위 테스트들은 리별 목표를 크게 줘서 Step 3(`extractFromRi`)에서 다 채워진다.
+   * **Step 4(미달 보충)에도 같은 가드가 있어야 한다** — 없으면 Step 3에서 뽑힌
+   * 농가 미상 필지가 `farmerCounts['']`를 이미 상한까지 올려놔서, 보충 단계가
+   * 나머지를 전부 건너뛴다. 리별 목표를 작게 줘 그 경로를 연다.
+   */
+  it('보충 단계에서도 농가 미상 필지가 상한에 걸리지 않는다', () => {
+    const result = extractParcels(
+      emptyFarmerParcels,
+      makeConfig({
+        totalTarget: 20,
+        publicPaymentTarget: 20,
+        perRiTarget: 5, // Step 3은 5건만 → 15건을 Step 4가 채워야 한다
+        maxPerFarmer: 2,
+        underfillPolicy: 'supplement',
+      }),
+    );
+    expect(result.selectedParcels).toHaveLength(20);
+  });
+
+  it('보충 단계에서 식별된 농가의 상한은 그대로 지킨다', () => {
+    const sameFarmer = Array.from({ length: 30 }, (_, i) =>
+      makeParcel({ farmerId: 'F1', parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
+    );
+    const result = extractParcels(
+      sameFarmer,
+      makeConfig({
+        totalTarget: 20,
+        publicPaymentTarget: 20,
+        perRiTarget: 1,
+        maxPerFarmer: 2,
+        underfillPolicy: 'supplement',
+      }),
+    );
+    expect(result.selectedParcels.length).toBeLessThanOrEqual(2);
+  });
+
+  it('일부만 비어 있으면 나머지 농가의 상한은 그대로 지킨다', () => {
+    const mixed = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeParcel({ farmerId: '', parcelId: `${200 + i}`, ri: 'A리', area: 1000 }),
+      ),
+      ...Array.from({ length: 10 }, (_, i) =>
+        makeParcel({ farmerId: 'F1', parcelId: `${300 + i}`, ri: 'A리', area: 1000 }),
+      ),
+    ];
+    const result = extractParcels(
+      mixed,
+      makeConfig({ totalTarget: 20, publicPaymentTarget: 20, perRiTarget: 20, maxPerFarmer: 2 }),
+    );
+    const f1Count = result.selectedParcels.filter((p) => p.farmerId === 'F1').length;
+    expect(f1Count).toBeLessThanOrEqual(2);
+    // 농가 미상 10건은 상한에 걸리지 않는다
+    expect(result.selectedParcels.filter((p) => p.farmerId === '').length).toBe(10);
+  });
+});
+
 describe('validateExtraction', () => {
   const config = makeConfig({ totalTarget: 3, publicPaymentTarget: 3, maxPerFarmer: 2 });
   const riStatsFor = (selected: Parcel[]) => generateRiStats(selected, selected, config);
@@ -411,6 +531,18 @@ describe('validateExtraction', () => {
     expect(v.errors.some((e) => e.code === 'SAMPLED_INCLUDED')).toBe(true);
   });
 
+  it('경영체번호가 빈 필지는 농가 상한 계산에서 뺀다', () => {
+    // 셋 다 빈 경영체번호. 묶으면 farmerCounts['']가 3이 되어 상한 2를 넘는다.
+    const selected = [
+      makeParcel({ farmerId: '', parcelId: '1' }),
+      makeParcel({ farmerId: '', parcelId: '2' }),
+      makeParcel({ farmerId: '', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    expect(v.errors.some((e) => e.code === 'FARMER_OVER_LIMIT')).toBe(false);
+    expect(v.warnings.some((w) => w.code === 'FARMER_ID_MISSING')).toBe(true);
+  });
+
   it('기채취 이력이 없으면 SAMPLED_INCLUDED가 없다', () => {
     const selected = [
       makeParcel({ farmerId: 'F1', parcelId: '1' }),
@@ -452,18 +584,26 @@ describe('generateRiStats / generateFarmerStats', () => {
   });
 
   /**
-   * PROJ1-1-30에 기록한 미이행분. 경영체번호가 빈 필지들이 `farmerId: ''` 한 농가로
-   * 집계된다. 고치면 이 테스트가 실패한다 — 그때 기대를 "빈 농가는 집계에서 제외"로
-   * 바꾸면 된다.
+   * 빈 경영체번호를 묶으면 `farmerId: ''`라는 **존재하지 않는 농가**가 통계에 나타나고,
+   * 그 건수가 실제 농가들과 나란히 표시된다. 빠진 필지 수는 `FARMER_ID_MISSING`
+   * 경고가 알린다(PROJ1-1-30).
    */
-  it('[PROJ1-1-30 미수정] 빈 경영체번호가 한 농가로 집계된다', () => {
+  it('경영체번호가 없는 필지는 농가 통계에서 뺀다', () => {
     const stats = generateFarmerStats([
       makeParcel({ farmerId: '', parcelId: '1' }),
       makeParcel({ farmerId: '', parcelId: '2' }),
-      makeParcel({ farmerId: '', parcelId: '3' }),
+      makeParcel({ farmerId: 'F1', parcelId: '3' }),
     ]);
     expect(stats).toHaveLength(1);
-    expect(stats[0].farmerId).toBe('');
-    expect(stats[0].selectedParcels).toBe(3);
+    expect(stats[0].farmerId).toBe('F1');
+  });
+
+  it('경영체번호가 전부 비면 농가 통계가 빈다', () => {
+    expect(
+      generateFarmerStats([
+        makeParcel({ farmerId: '', parcelId: '1' }),
+        makeParcel({ farmerId: '', parcelId: '2' }),
+      ]),
+    ).toEqual([]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parcelFarmerKey, parcelMatchKey } from '../parcelKey';
+import { farmerGroupKey, hasFarmerId, parcelFarmerKey, parcelMatchKey } from '../parcelKey';
 import {
   categoryLabel,
   isPublicPayment,
@@ -33,14 +33,17 @@ describe('parcelMatchKey', () => {
   });
 
   /**
-   * PROJ1-1-30에 기록한 취약점. PNU가 없고 주소·지번이 모두 빈 필지끼리는
-   * `'__'`라는 같은 키를 갖는다. `parcelFarmerKey`는 이 문제를 막았는데
-   * (빈 값이면 `null` 반환) 이쪽은 아직 방치돼 있다.
+   * PNU가 없고 주소·지번이 모두 빈 필지끼리는 `'__'`라는 같은 키를 갖는다.
+   * 형제 함수 `parcelFarmerKey`는 이 문제를 막는데(빈 값이면 `null` 반환)
+   * 이쪽은 방치돼 있다.
    *
-   * PROJ1-1-30에서 `null` 반환으로 고치면 이 테스트가 실패한다 —
-   * 그때 기대값을 `toBeNull()`로 바꾸면 된다.
+   * **PROJ1-1-37로 분리했다.** `null` 반환으로 바꾸려면 호출부 9곳을 용도별로
+   * (Set 구축 / 조회 / dedupe) 함께 정리해야 해서, PROJ1-1-30에 얹으면
+   * 그 수정의 리뷰가 흐려진다.
+   *
+   * 고치면 이 테스트가 실패한다 — 그때 기대값을 `toBeNull()`로 바꾸면 된다.
    */
-  it('[PROJ1-1-30 미수정] 주소·지번이 모두 비면 전부 같은 키가 된다', () => {
+  it('[PROJ1-1-37 미수정] 주소·지번이 모두 비면 전부 같은 키가 된다', () => {
     const a = makeParcel({ pnu: '', address: '', parcelId: '' });
     const b = makeParcel({ pnu: '', address: '', parcelId: '' });
     expect(parcelMatchKey(a)).toBe('__');
@@ -81,6 +84,49 @@ describe('parcelFarmerKey', () => {
     // 둘 다 null — Set에 넣어도 매칭 대상이 되지 않는다
     expect(a).toBeNull();
     expect(b).toBeNull();
+  });
+});
+
+/**
+ * 마스터 파일이라고 경영체번호가 항상 있는 것은 아니다 — `ColumnMapper`가 요구하는 것은
+ * **컬럼의 매핑**이지 행마다 값이 있다는 보장이 아니고, `excelParser`는 빈 셀을 `''`로
+ * 만든 뒤 그 행을 걸러내지 않는다(PROJ1-1-30).
+ */
+describe('hasFarmerId', () => {
+  it('경영체번호가 있으면 true다', () => {
+    expect(hasFarmerId(makeParcel({ farmerId: 'F001' }))).toBe(true);
+  });
+
+  it('비어 있으면 false다', () => {
+    expect(hasFarmerId(makeParcel({ farmerId: '' }))).toBe(false);
+  });
+});
+
+/**
+ * 빈 값은 "같은 농가"가 아니라 **"농가 미상"**이다. 묶으면 농가당 상한이 서로 무관한
+ * 필지 전체에 한꺼번에 걸려 수십 건이 후보에서 통째로 사라진다.
+ */
+describe('farmerGroupKey', () => {
+  it('경영체번호가 있으면 그것을 키로 쓴다', () => {
+    expect(farmerGroupKey(makeParcel({ farmerId: 'F001' }), 0)).toBe('F001');
+  });
+
+  it('같은 농가는 인덱스가 달라도 같은 키다', () => {
+    const a = farmerGroupKey(makeParcel({ farmerId: 'F001', parcelId: '1' }), 0);
+    const b = farmerGroupKey(makeParcel({ farmerId: 'F001', parcelId: '2' }), 7);
+    expect(a).toBe(b);
+  });
+
+  it('경영체번호가 비면 행마다 다른 키를 준다', () => {
+    const a = farmerGroupKey(makeParcel({ farmerId: '' }), 0);
+    const b = farmerGroupKey(makeParcel({ farmerId: '' }), 1);
+    expect(a).not.toBe(b);
+  });
+
+  it('농가 미상 키는 실제 경영체번호와 충돌하지 않는다', () => {
+    // 경영체번호는 숫자 문자열이라 이 접두사와 겹칠 수 없다
+    expect(farmerGroupKey(makeParcel({ farmerId: '' }), 0)).toMatch(/^__nofarmer_/);
+    expect(farmerGroupKey(makeParcel({ farmerId: '0' }), 0)).toBe('0');
   });
 });
 
