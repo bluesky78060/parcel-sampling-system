@@ -9,12 +9,14 @@ import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 
 type TabId = 'table' | 'map';
 
 const EMPTY_PARCELS: Parcel[] = [];
 
 export function ReviewPage() {
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
   const navigate = useNavigate();
   const { allParcels, representativeParcels, getRiList } = useParcelStore();
   const { result, toggleParcelSelection, addParcel, removeParcel, config: extractionConfig } = useExtractionStore();
@@ -113,13 +115,15 @@ export function ReviewPage() {
   const riList = useMemo(() => getRiList(), [getRiList]);
 
   const mapLegendCounts = useMemo(() => {
+    // 안에서 계산한다. 밖에서 만들면 매 렌더 새 배열이라 메모이제이션이 깨진다.
+    const sampledYears = sampledYearsOf(surveyYear);
     const selectedKeys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
     const repKeys = new Set(representativeParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
     let selected = 0;
     let representative = 0;
     let unselected = 0;
-    let sampled2024 = 0;
-    let sampled2025 = 0;
+    // 연도를 키로 센다. MapLegend가 같은 연도로 찾아가므로 순서에 기대지 않는다.
+    const sampledByYear: Record<number, number> = { [sampledYears[0]]: 0, [sampledYears[1]]: 0 };
     let noCoords = 0;
 
     // 대표필지 수 (좌표 있는 것만)
@@ -134,17 +138,17 @@ export function ReviewPage() {
         noCoords++;
       } else if (selectedKeys.has(`${p.farmerId}__${p.parcelId}`)) {
         selected++;
-      } else if (p.sampledYears.includes(2024)) {
-        sampled2024++;
-      } else if (p.sampledYears.includes(2025)) {
-        sampled2025++;
+      } else if (p.sampledYears.includes(sampledYears[0])) {
+        sampledByYear[sampledYears[0]]++;
+      } else if (p.sampledYears.includes(sampledYears[1])) {
+        sampledByYear[sampledYears[1]]++;
       } else if (p.isEligible) {
         unselected++;
       }
     }
 
-    return { selected, representative, unselected, sampled2024, sampled2025, noCoords };
-  }, [allParcels, selectedParcels, representativeParcels]);
+    return { selected, representative, unselected, sampledByYear, noCoords };
+  }, [allParcels, selectedParcels, representativeParcels, surveyYear]);
 
   if (!result) return null;
 
@@ -464,7 +468,7 @@ export function ReviewPage() {
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-500">2026 선택</span>
+                    <span className="text-gray-500">{surveyYear} 선택</span>
                     {isRepresentative(selectedMarkerParcel) ? (
                       <span className="font-semibold text-emerald-600">고정 선택</span>
                     ) : (

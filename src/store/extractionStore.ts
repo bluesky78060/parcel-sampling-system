@@ -188,7 +188,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       for (const p of allRepParcels) {
         if (!p.isEligible) {
-          excludedRepReasons.push({ parcel: p, reason: '기채취(2024/2025) 중복' });
+          excludedRepReasons.push({ parcel: p, reason: '기채취 연도 중복' });
           continue;
         }
         if (p.ri && config.excludedRis.includes(p.ri)) {

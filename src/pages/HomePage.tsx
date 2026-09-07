@@ -1,7 +1,25 @@
 import { useNavigate } from 'react-router-dom';
+import { useSurveyStore, selectableYears } from '../store/surveyStore';
+import { changeSurveyYear, hasWorkInProgress } from '../store/changeSurveyYear';
 
 export function HomePage() {
   const navigate = useNavigate();
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
+
+  const handleYearChange = (year: number) => {
+    if (year === surveyYear) return;
+    // 슬롯 id·기채취 파일 조회가 연도에서 파생되므로, 바꾸면 등록한 파일이 고아가 된다.
+    // 그래서 작업을 함께 비우는데, 사용자가 모르고 잃지 않도록 먼저 묻는다.
+    if (
+      hasWorkInProgress() &&
+      !window.confirm(
+        `조사 연도를 ${year}년으로 바꾸면 등록한 파일과 분석·추출 결과가 모두 초기화됩니다. 계속할까요?`
+      )
+    ) {
+      return;
+    }
+    changeSurveyYear(year);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-6 py-12">
@@ -11,8 +29,32 @@ export function HomePage() {
           농업환경변동조사 필지 추출 시스템
         </h1>
         <p className="text-gray-500 text-lg">
-          2026년 토양 시료 채취 대상 필지 추출 — 경상북도 봉화군
+          {surveyYear}년 토양 시료 채취 대상 필지 추출 — 경상북도 봉화군
         </p>
+
+        {/*
+          조사 연도. 기채취 연도({surveyYear-1}, {surveyYear-2})와 화면 문구·업로드 슬롯·
+          엑셀 시트명이 전부 이 값에서 파생된다. 따로 입력받지 않는 이유는 두 값이
+          어긋났을 때 그것을 검사하는 곳이 없기 때문이다.
+        */}
+        <div className="mt-6 inline-flex items-center gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
+          <label htmlFor="survey-year" className="text-sm font-medium text-gray-700">
+            조사 연도
+          </label>
+          <select
+            id="survey-year"
+            value={surveyYear}
+            onChange={(e) => handleYearChange(Number(e.target.value))}
+            className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-semibold text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+          >
+            {selectableYears(surveyYear).map((y) => (
+              <option key={y} value={y}>{y}년</option>
+            ))}
+          </select>
+          <span className="text-xs text-gray-400">
+            기채취 제외 대상 {surveyYear - 1}·{surveyYear - 2}년
+          </span>
+        </div>
       </div>
 
       {/* 카드 버튼 */}

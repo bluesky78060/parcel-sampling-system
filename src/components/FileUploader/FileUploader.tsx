@@ -10,7 +10,7 @@ interface FileUploaderProps {
   slotId: string;
   label: string;
   required: boolean;
-  defaultYear: 2024 | 2025 | 2026;
+  defaultYear: number;
   defaultRole: 'sampled' | 'master' | 'representative';
 }
 

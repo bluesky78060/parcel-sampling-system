@@ -4,6 +4,7 @@ import type { Parcel, RiStat, FarmerStat } from '../types';
 import { parseNumericCell } from './excelParser';
 import { isPublicPayment, isRepresentative, categoryLabel } from './parcelCategory';
 import { parcelMatchKey } from './parcelKey';
+import { useSurveyStore } from '../store/surveyStore';
 
 interface ExportData {
   selectedParcels: Parcel[];
@@ -19,6 +20,24 @@ interface ExportData {
  * 추출 결과를 다중 시트 엑셀 파일로 내보내기
  */
 export function exportToExcel(data: ExportData): void {
+  // 시트명·파일명·컬럼명이 조사 연도를 따른다. React 밖이라 getState로 읽는다.
+  const surveyYear = useSurveyStore.getState().surveyYear;
+  const wb = buildWorkbook(data, surveyYear);
+
+  // 다운로드
+  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+  const blob = new Blob([wbout], { type: 'application/octet-stream' });
+  const now = new Date().toISOString().slice(0, 10);
+  saveAs(blob, `${surveyYear}필지선정(공익직불제+대표필지)_${now}.xlsx`);
+}
+
+/**
+ * 워크북 조립. 저장(`saveAs`)과 떼어 둔 이유는 시트명·컬럼명이 연도를 따르는지를
+ * 브라우저 없이(scripts/verify-survey-year.mjs) 확인하기 위해서다.
+ *
+ * 연도를 인자로 받는다 — 여기서 스토어를 읽으면 검증이 스토어 상태에 묶인다.
+ */
+export function buildWorkbook(data: ExportData, surveyYear: number): XLSX.WorkBook {
   // 디버그: rawData 컬럼명만 출력 (개인정보 제외)
   const sampleParcel = data.selectedParcels[0] ?? data.allParcels[0];
   if (sampleParcel?.rawData) {
@@ -35,7 +54,7 @@ export function exportToExcel(data: ExportData): void {
     (p) => isPublicPayment(p)
   );
   const selectedSheet = createSelectedSheet(publicPaymentParcels, dupKeys);
-  XLSX.utils.book_append_sheet(wb, selectedSheet, '2026_필지선정');
+  XLSX.utils.book_append_sheet(wb, selectedSheet, `${surveyYear}_필지선정`);
 
   // 시트 2: 대표필지 (별도 시트, 동일 포맷). 'both'는 시트 1에도 실리므로
   // 두 시트를 합치는 사람이 이중 계상하지 않도록 '중복여부'에 O를 찍는다
@@ -61,14 +80,10 @@ export function exportToExcel(data: ExportData): void {
 
   // 시트 6: 전체 필지 (구분 컬럼 포함)
   const allWithRep = [...data.allParcels, ...data.representativeParcels];
-  const allSheet = createAllParcelsSheet(allWithRep);
+  const allSheet = createAllParcelsSheet(allWithRep, surveyYear);
   XLSX.utils.book_append_sheet(wb, allSheet, '전체필지');
 
-  // 다운로드
-  const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
-  const blob = new Blob([wbout], { type: 'application/octet-stream' });
-  const now = new Date().toISOString().slice(0, 10);
-  saveAs(blob, `2026필지선정(공익직불제+대표필지)_${now}.xlsx`);
+  return wb;
 }
 
 /**
@@ -234,7 +249,7 @@ function createExcludedSheet(parcels: Parcel[]): XLSX.WorkSheet {
   return XLSX.utils.json_to_sheet(rows);
 }
 
-function createAllParcelsSheet(parcels: Parcel[]): XLSX.WorkSheet {
+function createAllParcelsSheet(parcels: Parcel[], surveyYear: number): XLSX.WorkSheet {
   const rows = parcels.map(p => ({
     '구분': categoryLabel(p),
     '경영체번호': p.farmerId,
@@ -252,7 +267,7 @@ function createAllParcelsSheet(parcels: Parcel[]): XLSX.WorkSheet {
     '면적(㎡)': p.area ?? '',
     '채취이력': p.sampledYears.join(', ') || '없음',
     '추출가능': p.isEligible ? 'O' : 'X',
-    '2026선택': p.isSelected ? 'O' : 'X',
+    [`${surveyYear}선택`]: p.isSelected ? 'O' : 'X',
     '위도': p.coords?.lat ?? '',
     '경도': p.coords?.lng ?? '',
   }));

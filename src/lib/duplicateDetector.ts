@@ -41,49 +41,54 @@ function isMatched(
 /**
  * 중복 필지 감지 (PNU 우선, farmerId+parcelId 폴백)
  *
- * 2026 마스터 - 2024 기채취 - 2025 기채취 = 추출 대상
+ * 마스터 − 기채취 연도들 = 추출 대상.
+ *
+ * 연도를 인자 이름에 박지 않는다. 예전에는 `sampled2024`/`sampled2025` 두 개로
+ * 고정돼 있어서, 다음 해 조사로 넘어가려면 이 함수와 호출부를 함께 고쳐야 했다.
+ *
+ * @param sampledByYear 연도 → 그 해에 채취된 필지 목록
  */
 export function findDuplicates(
   masterParcels: Parcel[],
-  sampled2024: Parcel[],
-  sampled2025: Parcel[]
+  sampledByYear: Record<number, Parcel[]>
 ): DuplicateResult {
-  const keys2024 = buildSampledKeySets(sampled2024);
-  const keys2025 = buildSampledKeySets(sampled2025);
+  const years = Object.keys(sampledByYear).map(Number).sort((a, b) => b - a);
+  const keySetsByYear = new Map(years.map(y => [y, buildSampledKeySets(sampledByYear[y])]));
 
   console.log(
     '[중복감지] 마스터:', masterParcels.length,
-    '| 2024 PNU:', keys2024.pnuSet.size, 'ADDR:', keys2024.addrSet.size,
-    '| 2025 PNU:', keys2025.pnuSet.size, 'ADDR:', keys2025.addrSet.size
+    ...years.flatMap(y => {
+      const k = keySetsByYear.get(y)!;
+      return [`| ${y} PNU:`, k.pnuSet.size, 'ADDR:', k.addrSet.size];
+    })
   );
 
-  const duplicateKeys2024 = new Set<string>();
-  const duplicateKeys2025 = new Set<string>();
+  const duplicateKeysByYear: Record<number, Set<string>> = {};
+  for (const y of years) duplicateKeysByYear[y] = new Set<string>();
   let eligibleCount = 0;
 
   for (const parcel of masterParcels) {
     const trackingKey = getDuplicateKey(parcel);
-    const is2024 = isMatched(parcel, keys2024);
-    const is2025 = isMatched(parcel, keys2025);
-
-    if (is2024 && trackingKey) duplicateKeys2024.add(trackingKey);
-    if (is2025 && trackingKey) duplicateKeys2025.add(trackingKey);
-    if (!is2024 && !is2025) eligibleCount++;
+    let matchedAny = false;
+    for (const y of years) {
+      if (isMatched(parcel, keySetsByYear.get(y)!)) {
+        matchedAny = true;
+        if (trackingKey) duplicateKeysByYear[y].add(trackingKey);
+      }
+    }
+    if (!matchedAny) eligibleCount++;
   }
 
+  const duplicateCountByYear: Record<number, number> = {};
+  for (const y of years) duplicateCountByYear[y] = duplicateKeysByYear[y].size;
+
   console.log(
-    '[중복감지] 2024 중복:', duplicateKeys2024.size,
-    '| 2025 중복:', duplicateKeys2025.size,
-    '| 추출가능:', eligibleCount
+    '[중복감지]',
+    ...years.flatMap(y => [`${y} 중복:`, duplicateCountByYear[y], '|']),
+    '추출가능:', eligibleCount
   );
 
-  return {
-    duplicateKeys2024,
-    duplicateKeys2025,
-    duplicateCount2024: duplicateKeys2024.size,
-    duplicateCount2025: duplicateKeys2025.size,
-    eligibleCount,
-  };
+  return { duplicateKeysByYear, duplicateCountByYear, eligibleCount };
 }
 
 /**
@@ -91,19 +96,18 @@ export function findDuplicates(
  */
 export function markEligibility(
   masterParcels: Parcel[],
-  sampled2024: Parcel[],
-  sampled2025: Parcel[]
+  sampledByYear: Record<number, Parcel[]>
 ): Parcel[] {
-  const result = findDuplicates(masterParcels, sampled2024, sampled2025);
-  const allDuplicateKeys = new Set([...result.duplicateKeys2024, ...result.duplicateKeys2025]);
+  const result = findDuplicates(masterParcels, sampledByYear);
+  // 필지에 붙는 채취이력은 시간순(오름차순)이다. 엑셀 '채취이력'·'채취연도' 컬럼과
+  // 지도 팝업이 이 배열을 그대로 join하므로, 연도를 일반화하기 전의 산출물
+  // ("2024, 2025")과 같은 모양을 유지한다. findDuplicates의 내림차순은 로그용일 뿐이다.
+  const years = Object.keys(result.duplicateKeysByYear).map(Number).sort((a, b) => a - b);
+  const allDuplicateKeys = new Set(years.flatMap(y => [...result.duplicateKeysByYear[y]]));
 
   return masterParcels.map(parcel => {
     const key = getDuplicateKey(parcel);
-    const is2024 = result.duplicateKeys2024.has(key);
-    const is2025 = result.duplicateKeys2025.has(key);
-    const sampledYears: number[] = [];
-    if (is2024) sampledYears.push(2024);
-    if (is2025) sampledYears.push(2025);
+    const sampledYears = years.filter(y => result.duplicateKeysByYear[y].has(key));
 
     return {
       ...parcel,

@@ -1,10 +1,15 @@
+import { useSurveyStore, sampledYearsOf } from '../../store/surveyStore';
 interface MapLegendProps {
   counts: {
     selected: number;
     representative: number;
     unselected: number;
-    sampled2024: number;
-    sampled2025: number;
+    /**
+     * 기채취 연도별 제외 건수. 키는 연도.
+     * 튜플로 받으면 집계 쪽과 라벨 쪽이 같은 순서라는 가정을 아무도 검사하지 않는다 —
+     * 어긋나면 라벨과 숫자가 뒤바뀐 채 조용히 표시된다. 연도로 찾으면 순서가 무관해진다.
+     */
+    sampledByYear: Record<number, number>;
     noCoords: number;
   };
   horizontal?: boolean;
@@ -19,6 +24,7 @@ interface LegendItem {
 }
 
 export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
+  const sampledYears = sampledYearsOf(useSurveyStore((st) => st.surveyYear));
   const items: LegendItem[] = [
     {
       color: '#059669',
@@ -38,13 +44,13 @@ export function MapLegend({ counts, horizontal = false }: MapLegendProps) {
     },
     {
       color: '#dc2626',
-      label: '2024 채취 제외',
-      count: counts.sampled2024,
+      label: `${sampledYears[0]} 채취 제외`,
+      count: counts.sampledByYear[sampledYears[0]] ?? 0,
     },
     {
       color: '#ea580c',
-      label: '2025 채취 제외',
-      count: counts.sampled2025,
+      label: `${sampledYears[1]} 채취 제외`,
+      count: counts.sampledByYear[sampledYears[1]] ?? 0,
     },
     {
       color: '#fbbf24',

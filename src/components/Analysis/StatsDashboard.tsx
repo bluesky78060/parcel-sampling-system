@@ -1,4 +1,5 @@
 import type { Statistics } from '../../types';
+import { useSurveyStore, sampledYearsOf } from '../../store/surveyStore';
 
 interface StatsDashboardProps {
   statistics: Statistics;
@@ -27,6 +28,7 @@ function StatCard({ label, value, iconColor, icon }: StatCardProps) {
 }
 
 export function StatsDashboard({ statistics, totalTarget }: StatsDashboardProps) {
+  const sampledYears = sampledYearsOf(useSurveyStore((st) => st.surveyYear));
   return (
     <div className="grid grid-cols-3 gap-4">
       <StatCard
@@ -40,8 +42,8 @@ export function StatsDashboard({ statistics, totalTarget }: StatsDashboardProps)
         }
       />
       <StatCard
-        label="2024 기채취"
-        value={statistics.sampled2024.toLocaleString()}
+        label={`${sampledYears[0]} 기채취`}
+        value={(statistics.sampledCountByYear[sampledYears[0]] ?? 0).toLocaleString()}
         iconColor="bg-red-100 text-red-600"
         icon={
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -50,8 +52,8 @@ export function StatsDashboard({ statistics, totalTarget }: StatsDashboardProps)
         }
       />
       <StatCard
-        label="2025 기채취"
-        value={statistics.sampled2025.toLocaleString()}
+        label={`${sampledYears[1]} 기채취`}
+        value={(statistics.sampledCountByYear[sampledYears[1]] ?? 0).toLocaleString()}
         iconColor="bg-orange-100 text-orange-600"
         icon={
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

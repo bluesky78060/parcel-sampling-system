@@ -45,7 +45,8 @@ export interface Parcel {
 export interface FileConfig {
   id: string;
   filename: string;
-  year: 2024 | 2025 | 2026;
+  /** 이 파일이 담당하는 연도. 조사 연도(surveyStore)에서 파생된 값이 들어온다 */
+  year: number;
   role: 'sampled' | 'master' | 'representative';
   columnMapping: ColumnMapping;
   /** 대표 시트명 (표시용). 여러 시트를 합친 경우 첫 시트 */
@@ -164,17 +165,17 @@ export interface ValidationMessage {
 }
 
 export interface DuplicateResult {
-  duplicateKeys2024: Set<string>;
-  duplicateKeys2025: Set<string>;
-  duplicateCount2024: number;
-  duplicateCount2025: number;
+  /** 기채취 연도별 중복 필지 키. 키는 연도, 값은 그 해에 채취된 필지 집합 */
+  duplicateKeysByYear: Record<number, Set<string>>;
+  /** 기채취 연도별 중복 건수 */
+  duplicateCountByYear: Record<number, number>;
   eligibleCount: number;
 }
 
 export interface Statistics {
   totalParcels: number;
-  sampled2024: number;
-  sampled2025: number;
+  /** 기채취 연도별 필지 수 */
+  sampledCountByYear: Record<number, number>;
   eligibleParcels: number;
   uniqueRis: number;
   canMeetTarget: boolean;

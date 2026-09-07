@@ -1,53 +1,14 @@
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useSurveyStore } from '../store/surveyStore';
 import { useFileStore } from '../store/fileStore';
 import { FileUploader } from '../components/FileUploader/FileUploader';
-
-const REQUIRED_SLOTS = [
-  {
-    slotId: 'master-2026',
-    label: '마스터 파일',
-    required: true,
-    defaultYear: 2026 as const,
-    defaultRole: 'master' as const,
-  },
-  {
-    slotId: 'sampled-2024',
-    label: '데이터 1',
-    required: true,
-    defaultYear: 2024 as const,
-    defaultRole: 'sampled' as const,
-  },
-  {
-    slotId: 'sampled-2025',
-    label: '데이터 2',
-    required: true,
-    defaultYear: 2025 as const,
-    defaultRole: 'sampled' as const,
-  },
-] as const;
-
-const OPTIONAL_SLOTS = [
-  {
-    slotId: 'representative',
-    label: '대표필지 파일 (선택사항)',
-    required: false,
-    defaultYear: 2026 as const,
-    defaultRole: 'representative' as const,
-  },
-  {
-    slotId: 'extra-ref',
-    label: '추가 참고 파일',
-    required: false,
-    defaultYear: 2026 as const,
-    defaultRole: 'master' as const,
-  },
-] as const;
-
-const SLOTS = [...REQUIRED_SLOTS, ...OPTIONAL_SLOTS] as const;
-
-const REQUIRED_SLOT_IDS = SLOTS.filter((s) => s.required).map((s) => s.slotId);
+import { buildUploadSlots } from '../lib/uploadSlots';
 
 export function UploadPage() {
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
+  const { required: REQUIRED_SLOTS, optional: OPTIONAL_SLOTS, requiredIds: REQUIRED_SLOT_IDS } =
+    useMemo(() => buildUploadSlots(surveyYear), [surveyYear]);
   const navigate = useNavigate();
   const { files } = useFileStore();
 
