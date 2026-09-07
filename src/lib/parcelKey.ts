@@ -42,18 +42,28 @@ export function parcelFarmerKey(p: Parcel): string | null {
  * 농가당 상한이 서로 무관한 필지 전체에 한꺼번에 걸린다.
  */
 export function hasFarmerId(p: Parcel): boolean {
-  return p.farmerId !== '';
+  // `!!`로 판정한다 — `farmerGroupKey`의 `||`와 정확히 같은 기준이다.
+  // `!== ''`로 두면 `undefined`에서 둘이 갈려(여기선 "식별됨", 저기선 "미상")
+  // 이 파일이 고친 결함이 키 이름만 바꿔 되살아난다.
+  // (`normalizeId('000')`이 `'0'`이라 truthy이므로 기존 동작은 그대로다.)
+  return !!p.farmerId;
 }
 
 /**
  * 농가별 그룹핑 키.
  *
- * 경영체번호가 비면 **행마다 고유한** 키를 준다. 그러지 않으면 `farmerGroups['']`에
+ * 경영체번호가 비면 `__nofarmer_{index}` 키를 준다. 그러지 않으면 `farmerGroups['']`에
  * 농가 미상 필지가 전부 들어가고, `slice(0, maxPerFarmer)`가 그중 두어 건만 남긴다 —
  * 서로 아무 관계도 없는 필지 수십 건이 한꺼번에 후보에서 사라진다.
  *
- * 인덱스를 섞는 것은 `groupBy`의 계약(키가 문자열)을 깨지 않으면서 고유성을 얻는
- * 가장 값싼 방법이다. 경영체번호는 숫자 문자열이라 `__nofarmer_` 접두사와 충돌하지 않는다.
+ * **인덱스는 `groupBy`에 넘긴 배열 안의 위치다. 따라서 이 키는 한 번의 `groupBy` 호출
+ * 안에서만 고유하다 — 호출을 가로질러 비교하면 안 된다.** A리의 `__nofarmer_0`과
+ * B리의 `__nofarmer_0`은 같은 문자열이다. 현재 호출부(`extractFromRi`)는 리별 배열로
+ * 호출하고 결과를 즉시 소비하므로 안전하지만, 두 호출의 그룹 키를 한 `Set`에 모으면
+ * 조용히 어긋난다.
+ *
+ * 경영체번호는 `normalizeId`를 거친 숫자 문자열이라 `__nofarmer_` 접두사와 겹치지 않는다.
+ * (다만 그 함수가 문자 종류를 강제하지는 않는다 — 실무상 위험은 무시할 수준이다.)
  */
 export function farmerGroupKey(p: Parcel, index: number): string {
   return p.farmerId || `__nofarmer_${index}`;

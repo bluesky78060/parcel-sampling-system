@@ -12,6 +12,7 @@ import type {
 import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance, meanPlusTwoSigma } from './spatialUtils';
 import { parseNumericCell } from './excelParser';
 import { parcelMatchKey, parcelFarmerKey, hasFarmerId, farmerGroupKey } from './parcelKey';
+import { isRepresentative } from './parcelCategory';
 
 /**
  * 실지목 우선, 없으면 공부지목, 둘 다 없으면 '미분류'
@@ -600,14 +601,32 @@ export function validateExtraction(
   // 단서를 찾을 수 없다. 원인은 코드가 아니라 **원본 파일의 빈 셀**이다.
   const missingFarmerId = selectedParcels.filter(p => !hasFarmerId(p));
   if (missingFarmerId.length > 0) {
+    // 원인을 나눠 알린다. "원본 파일의 빈 셀을 확인하라"고만 하면 사용자가 마스터를
+    // 아무리 훑어도 못 찾는 경우가 있다 — **대표필지 파일은 경영체번호 컬럼 매핑
+    // 자체가 선택**이라(`ColumnMapper`), 컬럼이 없으면 전 행이 빈 값이 된다.
+    // 그리고 마스터와 매칭되지 않은 대표필지는 보충 없이 그대로 남는다.
+    const repCount = missingFarmerId.filter(isRepresentative).length;
+    const masterCount = missingFarmerId.length - repCount;
+    const ris = [...new Set(missingFarmerId.map(p => p.ri))];
+
+    const causes: string[] = [];
+    if (masterCount > 0) {
+      causes.push(`마스터 ${masterCount}건 — 원본 파일의 경영체번호 컬럼에 빈 셀이 있습니다`);
+    }
+    if (repCount > 0) {
+      causes.push(
+        `대표필지 ${repCount}건 — 대표필지 파일은 경영체번호 컬럼이 없어도 되며, ` +
+        '마스터와 매칭된 필지는 자동으로 채워집니다. 매칭되지 않은 것들입니다',
+      );
+    }
+
     warnings.push({
       code: 'FARMER_ID_MISSING',
       message: `경영체번호가 비어 있는 필지 ${missingFarmerId.length}건이 결과에 있습니다`,
       details:
         '농가당 제한 계산과 농가별 통계에서 제외됩니다. ' +
-        '원본 파일의 경영체번호 컬럼에 빈 셀이 있는지 확인하세요. ' +
-        `해당 리: ${[...new Set(missingFarmerId.map(p => p.ri))].slice(0, 5).join(', ')}` +
-        (new Set(missingFarmerId.map(p => p.ri)).size > 5 ? ' 외' : ''),
+        causes.join(' / ') +
+        `. 해당 리: ${ris.slice(0, 5).join(', ')}${ris.length > 5 ? ' 외' : ''}`,
     });
   }
 

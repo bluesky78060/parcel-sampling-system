@@ -337,6 +337,48 @@ describe('extractParcels — 경영체번호가 빈 필지', () => {
     makeParcel({ farmerId: '', parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
   );
 
+  /**
+   * **이 테스트가 수정의 주 지점(`groupBy(parcels, farmerGroupKey)`)을 지킨다.**
+   *
+   * 다른 테스트는 전부 `underfillPolicy: 'supplement'`(기본값)라, Step 3에서 2건만
+   * 남아도 Step 4 보충이 나머지를 채워 준다. 그래서 Step 3의 그룹핑을 원래대로
+   * 되돌려도 아무 테스트가 죽지 않았다 — Step 4 가드가 Step 3 결함을 가린 것이다.
+   *
+   * `'skip'`이면 Step 4가 아예 돌지 않아 그룹핑이 **유일한 방어선**이 된다.
+   * 이 정책은 화면에서 사용자가 고를 수 있다(`ExtractionSettings`).
+   */
+  it('보충을 끄면(skip) 리별 추출만으로도 농가 미상이 묶이지 않는다', () => {
+    const result = extractParcels(
+      emptyFarmerParcels,
+      makeConfig({
+        totalTarget: 20,
+        publicPaymentTarget: 20,
+        perRiTarget: 20,
+        maxPerFarmer: 2,
+        underfillPolicy: 'skip',
+      }),
+    );
+    // 묶이면 slice(0, 2)로 2건만 남는다 — 티켓이 서술한 바로 그 사고
+    expect(result.selectedParcels).toHaveLength(20);
+  });
+
+  it('보충을 꺼도 식별된 농가의 상한은 지킨다 (대조군)', () => {
+    const sameFarmer = Array.from({ length: 30 }, (_, i) =>
+      makeParcel({ farmerId: 'F1', parcelId: `${100 + i}`, ri: 'A리', area: 1000 }),
+    );
+    const result = extractParcels(
+      sameFarmer,
+      makeConfig({
+        totalTarget: 20,
+        publicPaymentTarget: 20,
+        perRiTarget: 20,
+        maxPerFarmer: 2,
+        underfillPolicy: 'skip',
+      }),
+    );
+    expect(result.selectedParcels).toHaveLength(2);
+  });
+
   it('농가 미상 필지들이 상한 하나로 묶여 버려지지 않는다', () => {
     const result = extractParcels(
       emptyFarmerParcels,
@@ -529,6 +571,36 @@ describe('validateExtraction', () => {
     ];
     const v = validateExtraction(selected, config, riStatsFor(selected));
     expect(v.errors.some((e) => e.code === 'SAMPLED_INCLUDED')).toBe(true);
+  });
+
+  /**
+   * 경고가 "원본 파일의 빈 셀을 확인하라"고만 하면 사용자가 마스터를 아무리 훑어도
+   * 못 찾는 경우가 있다 — **대표필지 파일은 경영체번호 컬럼 매핑 자체가 선택**이고
+   * (`ColumnMapper`), 마스터와 매칭되지 않은 대표필지는 빈 값인 채로 남는다.
+   * 그 경로를 안내하지 않으면 매 실행마다 사용자를 없는 문제로 보낸다.
+   */
+  it('대표필지와 마스터를 나눠 원인을 안내한다', () => {
+    const selected = [
+      makeParcel({ farmerId: '', parcelId: '1', parcelCategory: 'representative' }),
+      makeParcel({ farmerId: '', parcelId: '2', parcelCategory: 'public-payment' }),
+      makeParcel({ farmerId: 'F1', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    const w = v.warnings.find((x) => x.code === 'FARMER_ID_MISSING');
+    expect(w?.details).toContain('대표필지 1건');
+    expect(w?.details).toContain('마스터 1건');
+  });
+
+  it('마스터에만 빈 값이 있으면 대표필지 안내를 하지 않는다', () => {
+    const selected = [
+      makeParcel({ farmerId: '', parcelId: '1', parcelCategory: 'public-payment' }),
+      makeParcel({ farmerId: 'F1', parcelId: '2' }),
+      makeParcel({ farmerId: 'F2', parcelId: '3' }),
+    ];
+    const v = validateExtraction(selected, config, riStatsFor(selected));
+    const w = v.warnings.find((x) => x.code === 'FARMER_ID_MISSING');
+    expect(w?.details).toContain('마스터 1건');
+    expect(w?.details).not.toContain('대표필지');
   });
 
   it('경영체번호가 빈 필지는 농가 상한 계산에서 뺀다', () => {
