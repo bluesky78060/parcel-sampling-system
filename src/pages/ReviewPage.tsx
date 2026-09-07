@@ -7,7 +7,7 @@ import { ValidationPanel } from '../components/Review/ValidationPanel';
 import { KakaoMap } from '../components/Map/KakaoMap';
 import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
-import type { Parcel } from '../types';
+import type { Parcel, ParcelCategory } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
 import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 
@@ -25,9 +25,14 @@ export function ReviewPage() {
   const [categoryFilter, setCategoryFilter] = useState<'all' | 'public-payment' | 'representative'>('all');
   const [selectedMarkerParcel, setSelectedMarkerParcel] = useState<Parcel | null>(null);
   const [showDistanceCircle, setShowDistanceCircle] = useState(false);
-  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+  // 지도에는 추출된 필지만 올린다. 전량(마스터 4만 건)을 올리면 마커를 그것만큼
+  // 만드느라 탭 진입이 수 초 걸린다 — 정작 검토 대상은 선정된 700건이다.
+  // 전체를 보려면 "추출 선택만" 체크를 끈다.
+  const [showSelectedOnly, setShowSelectedOnly] = useState(true);
   const [isMapFullscreen, setIsMapFullscreen] = useState(false);
-  const [showPolygons, setShowPolygons] = useState(true);
+  // 필지 영역(VWorld 폴리곤)은 팬할 때마다 다시 조회·매칭하므로 기본은 끈다.
+  // 줌 15 이상에서만 그려지기도 해서, 켜 두면 초기 화면에서는 비용만 들고 안 보인다.
+  const [showPolygons, setShowPolygons] = useState(false);
 
   // 좌표 변환 (지도 탭에서 좌표 없을 때 사용)
   const geocoding = useGeocoding();
@@ -106,10 +111,43 @@ export function ReviewPage() {
     return [...selectedParcels, ...unselected];
   }, [allParcels, selectedParcels]);
 
-  // 추출 선택만 표시: 합쳐진 배열에서 좌표 포함된 데이터로 필터링
+  /**
+   * 추출 선택만 표시.
+   *
+   * 좌표 때문에 `allParcelsWithRep`을 소스로 쓴다 — `runGeocodingInReview`가
+   * 스토어의 필지만 갱신하고 `result.selectedParcels`는 건드리지 않기 때문이다.
+   *
+   * 그런데 그 배열은 중복 제거 때 **마스터 쪽 객체를 남기고**, 마스터 행의
+   * `parcelCategory`는 `'public-payment'`다. 대표필지 태깅(`'both'`)은
+   * `extractionStore`가 만든 **복사본**에만 붙어 있고 그것은 `result`에만 있다.
+   *
+   * 그대로 두면 마스터에도 있는 대표필지가 지도에서 초록 별이 아니라 파란 원으로
+   * 찍히고, 팝업도 "공익직불제 / 추출 선택"으로 나오며, 배지의 대표 수가 적게 세어진다.
+   * 좌표는 마스터 쪽에서, 분류는 결과 쪽에서 가져와 둘을 합친다.
+   */
   const mapSelectedParcels = useMemo(() => {
-    const keys = new Set(selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`));
-    return allParcelsWithRep.filter((p) => keys.has(`${p.farmerId}__${p.parcelId}`));
+    const keyOf = (p: Parcel) => `${p.farmerId}__${p.parcelId}`;
+
+    // 이 키(`farmerId__parcelId`)는 **리를 넘어 고유하지 않다** — 한 농가가 A리와
+    // B리에 각각 지번 100-1을 가질 수 있다(`lib/parcelKey.ts`의 경고 참조).
+    // 그런 충돌에서 나중 항목으로 덮어쓰면, 공익직불제 필지가 대표필지 별로 찍힌다.
+    // 대표필지는 반드시 조사해야 하는 고정 관측점이라, 아닌 것을 그렇게 표시하는 쪽이
+    // 놓치는 쪽보다 현장에 더 나쁜 신호다. 충돌하면 어느 쪽도 믿을 수 없으므로
+    // 보정을 포기하고 원본 분류를 그대로 둔다.
+    // (키 자체를 `parcelMatchKey`로 통일하는 것이 근본 해결이며 별도 티켓이다.)
+    const categoryByKey = new Map<string, ParcelCategory | undefined>();
+    for (const p of selectedParcels) {
+      const key = keyOf(p);
+      if (!categoryByKey.has(key)) categoryByKey.set(key, p.parcelCategory);
+      else if (categoryByKey.get(key) !== p.parcelCategory) categoryByKey.set(key, undefined);
+    }
+
+    return allParcelsWithRep
+      .filter((p) => categoryByKey.has(keyOf(p)))
+      .map((p) => {
+        const category = categoryByKey.get(keyOf(p));
+        return category && category !== p.parcelCategory ? { ...p, parcelCategory: category } : p;
+      });
   }, [allParcelsWithRep, selectedParcels]);
 
   const riList = useMemo(() => getRiList(), [getRiList]);

@@ -80,8 +80,10 @@ export function useMapInit(containerRef: React.RefObject<HTMLDivElement | null>)
       // 하이브리드 오버레이 기본 활성화 (항공사진 위에 라벨 표시)
       hybridLayer.addTo(map);
 
-      // 연속지적도 기본 활성화
-      cadastralLayer.addTo(map);
+      // 연속지적도는 기본으로 켜지 않는다.
+      // WMTS 캐시 타일인 위성·하이브리드와 달리 이것은 WMS라 서버가 타일마다
+      // 렌더링한다. 초기 줌 11에서 봉화군 전역을 요청하면 응답이 눈에 띄게 느리고,
+      // 타일 한 장당 요청이 3건이 된다. 필요하면 레이어 컨트롤에서 켠다.
 
       // 레이어 컨트롤 추가
       const baseLayers: Record<string, L.TileLayer> = {
