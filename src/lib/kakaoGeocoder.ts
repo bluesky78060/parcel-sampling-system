@@ -2,6 +2,8 @@ import type { LatLng } from '../types';
 import { normalizeAddress, normalizeAddressLotNumber } from './addressParser';
 import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
 import { jsonp, JsonpNetworkError, JsonpTimeoutError } from './jsonp';
+import { BONGHWA_BOUNDS, isInBonghwaBounds } from './bonghwaBounds';
+import { riCodePrefix } from './pnuGenerator';
 
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
@@ -153,13 +155,9 @@ export function getGeocodingProvider(): 'vworld' | 'kakao' | null {
  * 좌표가 봉화군 범위 내인지 검증
  */
 function isValidBonghwaCoord(coord: LatLng): boolean {
-  // 연속지적도 표본 14,400필지 실측(2026-09-04): lat 36.74782~37.08306,
-  // lng 128.62637~129.37416. 예전 범위(36.75~37.15 / 128.55~129.25)는
-  // 남단(봉성면)과 동단(소천면) 필지를 실제로 잘라냈다. 여유를 둔다.
-  return (
-    coord.lat >= 36.70 && coord.lat <= 37.15 &&
-    coord.lng >= 128.55 && coord.lng <= 129.45
-  );
+  // 경계값은 lib/bonghwaBounds 하나만 쓴다. 지도 쪽(mapUtils.isInBonghwa)과
+  // 갈라져 있던 탓에 여기서 통과한 좌표가 마커에서 버려진 적이 있다.
+  return isInBonghwaBounds(coord.lat, coord.lng);
 }
 
 // 봉화군 법정동코드 접두사 (경상북도 봉화군 = 47920)
@@ -236,21 +234,42 @@ let pnuDisabled = false;
  * coords: [lng, lat][] (GeoJSON 순서)
  */
 export function computePolygonCentroid(coords: number[][]): LatLng {
+  if (coords.length === 0) return { lat: 0, lng: 0 };
+
+  // 원점을 폴리곤 첫 점으로 옮긴 뒤 계산한다.
+  //
+  // 절대좌표로 바로 계산하면 작은 필지에서 결과가 수 km 날아간다. 봉화군 좌표는
+  // lng 128·lat 36 규모라 `x_j*y_i - x_i*y_j`가 4,750쯤 되는 두 수의 차인데,
+  // 2m×2m 필지에서 그 차이는 1e-10 수준이다. double의 유효숫자 15~16자리 중
+  // 상위 4자리가 같아 상쇄되고, 남은 오차에 (x_j+x_i)≈257을 곱한 뒤 작은 면적으로
+  // 나누면서 증폭된다.
+  //
+  // 실측(2026-09-07, 연속지적도 표본 1,600필지): 이 보정 전에는 **62%**의 centroid가
+  // 자기 폴리곤 밖에 떨어졌고 최대 8km까지 벗어났다. 상대좌표로 옮기면 값이 1e-5
+  // 규모가 되어 상쇄가 사라진다.
+  const [ox, oy] = coords[0];
+
   let area = 0;
   let cx = 0;
   let cy = 0;
 
   for (let i = 0, j = coords.length - 1; i < coords.length; j = i++) {
-    const cross = coords[j][0] * coords[i][1] - coords[i][0] * coords[j][1];
+    const xj = coords[j][0] - ox, yj = coords[j][1] - oy;
+    const xi = coords[i][0] - ox, yi = coords[i][1] - oy;
+    const cross = xj * yi - xi * yj;
     area += cross;
-    cx += (coords[j][0] + coords[i][0]) * cross;
-    cy += (coords[j][1] + coords[i][1]) * cross;
+    cx += (xj + xi) * cross;
+    cy += (yj + yi) * cross;
   }
 
   area /= 2;
 
-  // 면적이 0에 가까우면 (직선 형태) 단순 평균으로 폴백
-  if (Math.abs(area) < 1e-12) {
+  // 면적이 0에 가까우면 (직선·점 형태) 단순 평균으로 폴백.
+  // 임계값은 상대좌표 기준이다. 봉화군 위도에서 1 deg² ≈ 111,000m × 88,000m이므로
+  // 1e-16 deg² ≈ 1e-6 m²(1mm²)다. 실측 최소 필지(2m 삼각형, 면적 ~2m² = 2e-10 deg²)보다
+  // 6자리 작아 실제 필지는 걸리지 않고, 점·선·공선(共線) 도형만 걸린다.
+  // (옛 임계값 1e-12는 절대좌표 기준이었고 2m 필지 면적보다 커서 폴백이 안 걸렸다)
+  if (Math.abs(area) < 1e-16) {
     let sumLng = 0, sumLat = 0;
     for (const [lng, lat] of coords) {
       sumLng += lng;
@@ -260,8 +279,8 @@ export function computePolygonCentroid(coords: number[][]): LatLng {
   }
 
   return {
-    lng: cx / (6 * area),
-    lat: cy / (6 * area),
+    lng: cx / (6 * area) + ox,
+    lat: cy / (6 * area) + oy,
   };
 }
 
@@ -317,7 +336,9 @@ export async function geocodePnu(pnu: string): Promise<LatLng | null> {
           geometry: 'true',
           crs: 'EPSG:4326',
           attrFilter: `pnu:=:${pnu}`,
-          geomFilter: 'BOX(128.55,36.75,129.25,37.15)',
+          // 경계 상수의 세 번째 사본이 여기 숨어 있었다. 호출처가 없는 코드지만,
+          // 되살릴 때 옛 상자가 남단·동단 필지를 잘라내지 않도록 단일 출처를 쓴다.
+          geomFilter: `BOX(${BONGHWA_BOUNDS.lngMin},${BONGHWA_BOUNDS.latMin},${BONGHWA_BOUNDS.lngMax},${BONGHWA_BOUNDS.latMax})`,
         });
 
         const res = await fetch(`${VWORLD_DATA_URL}?${params}`);
@@ -1027,8 +1048,19 @@ export async function prefetchPolygonsByPnu(
  */
 const HEALTHCHECK_ATTEMPTS = 2;
 
-/** 헬스체크용 리 코드 (봉화군 봉화읍 내성리) */
-const HEALTHCHECK_RI_PREFIX = '4792025021';
+/**
+ * 헬스체크용 리 코드 — 봉화읍 내성리(4792025031).
+ *
+ * 예전에는 `'4792025021'`을 손으로 적어 두었는데 **존재하지 않는 코드**였다
+ * (봉화읍은 22~31). VWORLD가 늘 빈 결과를 돌려줬고, 빈 응답은 `ok: true`로 처리되므로
+ * 헬스체크가 아무것도 검증하지 않은 채 통과하고 있었다(2026-09-07 발견).
+ *
+ * 그래서 리터럴을 두지 않고 `EUMRI_MAP`에서 파생한다. 그 표는
+ * `node scripts/verify-eumri-map.mjs`가 VWorld 실측과 대조하므로, 표가 맞으면 이 값도
+ * 맞는다. 표에 없는 이름이면 모듈 로드 시점에 던진다 — 조용히 무력화된 헬스체크보다
+ * 낫다.
+ */
+const HEALTHCHECK_RI_PREFIX = riCodePrefix('봉화읍', '내성리');
 
 export async function checkGeocodingService(
   signal?: AbortSignal,
@@ -1082,6 +1114,16 @@ async function probeGeocodingService(
         : isAuthErrorResponse(res.response.error) ? 'auth'
         : 'unreachable';
       return { ok: false, kind, message: text };
+    }
+    // 실재하는 리를 조회하므로 결과가 비어 있으면 이상하다. 차단하지는 않되
+    // (안전한 방향) 흔적은 남긴다 — 리 코드가 폐지·개편되면 헬스체크가 조용히
+    // 무력화되는데, 그 상태를 알아챌 방법이 이 로그뿐이다.
+    const probed = res.response?.result?.featureCollection?.features ?? [];
+    if (probed.length === 0) {
+      console.warn(
+        `[vworld] 사전 확인 응답이 비어 있습니다 — 리 코드 ${HEALTHCHECK_RI_PREFIX}가 ` +
+        '유효한지 scripts/verify-eumri-map.mjs로 확인하십시오'
+      );
     }
     return { ok: true, kind: null, message: null };
   } catch (err) {

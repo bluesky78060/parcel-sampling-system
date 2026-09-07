@@ -1,23 +1,12 @@
 import L from 'leaflet';
 import type { Parcel } from '../../types';
 import { escapeHtml } from '../../lib/htmlUtils';
+import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
 
-// 봉화군 대략적 좌표 범위 (여유 포함)
-export const BONGHWA_BOUNDS = {
-  latMin: 36.75,
-  latMax: 37.15,
-  lngMin: 128.55,
-  lngMax: 129.25,
-};
-
-export function isInBonghwa(lat: number, lng: number): boolean {
-  return (
-    lat >= BONGHWA_BOUNDS.latMin &&
-    lat <= BONGHWA_BOUNDS.latMax &&
-    lng >= BONGHWA_BOUNDS.lngMin &&
-    lng <= BONGHWA_BOUNDS.lngMax
-  );
-}
+// 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
+// 지오코딩 쪽과 갈라지면서, 통과한 좌표가 마커 단계에서 버려졌다.
+export { BONGHWA_BOUNDS };
+export const isInBonghwa = isInBonghwaBounds;
 
 export function getMarkerColor(parcel: Parcel, isSelected: boolean): string {
   if ((parcel.parcelCategory ?? 'public-payment') === 'representative' && isSelected) return '#059669';
