@@ -45,12 +45,35 @@ function limitRepresentativesByRi(reps: Parcel[], limit: number): Parcel[] {
 const matchKey = parcelMatchKey;
 const farmerKey = parcelFarmerKey;
 
+/**
+ * "이 필지와 같은 것인가"를 판정하는 술어.
+ *
+ * 예전에는 `p.farmerId === farmerId && p.parcelId === parcelId`로 비교했다.
+ * 지번은 리를 넘어 고유하지 않고 경영체번호는 빌 수 있으므로,
+ * **검토 화면에서 문단리의 농가 미상 지번 100을 한 건 빼면 내성리의 것도 함께
+ * 700건에서 사라졌다.** 화면에는 아무 표시도 없었다.
+ *
+ * 정규 키로 비교하되, 키가 없는(식별 불가능한) 필지는 **참조로만** 판정한다 —
+ * 그것이 유일하게 안전하다.
+ */
+function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
+  const key = matchKey(target);
+  if (key === null) return (p) => p === target;
+  return (p) => matchKey(p) === key;
+}
+
 /** 결과 배열에서 겹치는 필지를 1건으로 접은 배열 (공익직불제 행을 우선 보존) */
 export function dedupeSelected(parcels: Parcel[]): Parcel[] {
   const seen = new Set<string>();
   const result: Parcel[] = [];
   for (const p of parcels) {
     const key = matchKey(p);
+    // 식별 불가능한 필지(PNU·주소·지번이 모두 빈 행)는 접지 않고 각각 남긴다.
+    // 빈 키끼리 같은 필지로 볼 근거가 없다 — 접으면 결과에서 조용히 사라진다.
+    if (key === null) {
+      result.push(p);
+      continue;
+    }
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(p);
@@ -60,7 +83,16 @@ export function dedupeSelected(parcels: Parcel[]): Parcel[] {
 
 /** 결과 배열의 고유 필지 수 (공익직불제 ↔ 대표필지 겹침을 1건으로 계산) */
 export function countUniqueSelected(parcels: Parcel[]): number {
-  return new Set(parcels.map(matchKey)).size;
+  // 식별 불가능한 필지는 서로 다른 것으로 본다. 한 덩어리로 세면 결과 수가
+  // 실제보다 적게 나와 목표 미달로 오판된다.
+  const keys = new Set<string>();
+  let unidentified = 0;
+  for (const p of parcels) {
+    const key = matchKey(p);
+    if (key === null) unidentified++;
+    else keys.add(key);
+  }
+  return keys.size + unidentified;
 }
 
 const DEFAULT_CONFIG: ExtractionConfig = {
@@ -101,9 +133,9 @@ interface ExtractionStore {
   toggleLandCategoryFilter: (enabled: boolean) => void;
 
   runExtraction: (allParcels: Parcel[], representativeParcels?: Parcel[]) => void;
-  toggleParcelSelection: (farmerId: string, parcelId: string) => void;
+  toggleParcelSelection: (parcel: Parcel) => void;
   addParcel: (parcel: Parcel) => void;
-  removeParcel: (farmerId: string, parcelId: string) => void;
+  removeParcel: (parcel: Parcel) => void;
 
   getValidation: () => ValidationResult | null;
   reset: () => void;
@@ -219,7 +251,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       const masterByKey = new Map<string, Parcel>();
       const masterByFarmerKey = new Map<string, Parcel>();
       for (const p of allParcels) {
-        masterByKey.set(matchKey(p), p);
+        const mk = matchKey(p);
+        if (mk) masterByKey.set(mk, p);
         const fk = farmerKey(p);
         if (fk) masterByFarmerKey.set(fk, p);
       }
@@ -235,7 +268,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         // 같은 필지를 가리키는 마스터 행. 경영체번호+지번 폴백에서도 리를 본다 —
         // 안 보면 farmerKey에 ri를 넣은 보호가 여기서 우회된다: 다른 리의 같은 지번이
         // 매칭되고 그 PNU가 대표필지 행에 기입되어 제출 파일로 나간다.
-        const sameParcel = masterByKey.get(matchKey(rep))
+        const repMk = matchKey(rep);
+        const sameParcel = (repMk ? masterByKey.get(repMk) : undefined)
           // 경영체번호가 없으면 PNU/주소 매칭만 쓴다 — 빈 값 폴백은 오매칭을 부른다
           || (repFk ? masterByFarmerKey.get(repFk) : undefined)
           || (rep.farmerId
@@ -328,7 +362,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 대표필지 매칭 키 셋 (추출 알고리즘에서 우선 선택용)
       const repParcelKeys = new Set<string>();
       for (const p of repLimited) {
-        repParcelKeys.add(matchKey(p));
+        const mk = matchKey(p);
+        if (mk) repParcelKeys.add(mk);
         const fk = farmerKey(p);
         if (fk) repParcelKeys.add(fk);
       }
@@ -363,7 +398,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 'both'는 두 성격을 동시에 가지므로 양쪽 시트에 모두 실린다.
       const taggedPublic = result.selectedParcels.map(p => {
         const fk = farmerKey(p);
-        const isRep = repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
+        const mk = matchKey(p);
+        const isRep =
+          (mk !== null && repParcelKeys.has(mk)) || (fk !== null && repParcelKeys.has(fk));
         return isRep ? { ...p, parcelCategory: markAsRepresentative(p.parcelCategory) } : p;
       });
       const repInPublicCount = taggedPublic.filter(isRepresentative).length;
@@ -548,7 +585,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       //  - taggedPublic   : 사용자 지정이지만 **슬라이스를 이미 거쳐** 뽑힌 것
       //  - repSupplements : 알고리즘이 고른 대체분, 사용자 지정이 아님
       // 뒤 둘까지 면제하면 한 농가에 몰려도 경고가 안 뜬다.
-      const exemptKeys = new Set(repDirect.map(matchKey));
+      const exemptKeys = new Set(
+        repDirect.map(matchKey).filter((k): k is string => k !== null),
+      );
 
       const validation = validateExtraction(finalParcels, config, mergedRiStats, {
         totalTarget: effectiveTotal,
@@ -581,18 +620,13 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
     }
   },
 
-  toggleParcelSelection: (farmerId, parcelId) =>
+  toggleParcelSelection: (target) =>
     set((state) => {
       if (!state.result) return state;
       const selected = state.result.selectedParcels;
-      const exists = selected.some(
-        (p) => p.farmerId === farmerId && p.parcelId === parcelId
-      );
-      const newSelected = exists
-        ? selected.filter(
-            (p) => !(p.farmerId === farmerId && p.parcelId === parcelId)
-          )
-        : selected;
+      const matches = sameParcelPredicate(target);
+      const exists = selected.some(matches);
+      const newSelected = exists ? selected.filter((p) => !matches(p)) : selected;
 
       return {
         result: { ...state.result, selectedParcels: newSelected },
@@ -613,15 +647,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       };
     }),
 
-  removeParcel: (farmerId, parcelId) =>
+  removeParcel: (target) =>
     set((state) => {
       if (!state.result) return state;
+      const matches = sameParcelPredicate(target);
       return {
         result: {
           ...state.result,
-          selectedParcels: state.result.selectedParcels.filter(
-            (p) => !(p.farmerId === farmerId && p.parcelId === parcelId)
-          ),
+          selectedParcels: state.result.selectedParcels.filter((p) => !matches(p)),
         },
       };
     }),

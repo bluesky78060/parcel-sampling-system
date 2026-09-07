@@ -130,7 +130,8 @@ function fitMapBounds(
   const selectedBounds: L.LatLngTuple[] = [];
   for (const parcel of parcelsWithCoords) {
     if (!parcel.coords || !isInBonghwa(parcel.coords.lat, parcel.coords.lng)) continue;
-    if (selectedKeys.has(parcelKey(parcel))) {
+    const key = parcelKey(parcel);
+    if (key !== null && selectedKeys.has(key)) {
       selectedBounds.push([parcel.coords.lat, parcel.coords.lng]);
     }
   }
@@ -245,7 +246,11 @@ export function useMarkerLayer({
         continue;
       }
 
-      const isSelected = selectedKeys.has(parcelKey(parcel));
+      // 키가 없는 필지는 선택 여부를 판정할 수 없다 — 미선택으로 본다.
+      // 예전 키(`farmerId__parcelId`)는 경영체번호가 비면 리를 넘어 충돌해,
+      // **선택되지 않은 필지가 선택 마커로 찍혔다.**
+      const parcelMapKey = parcelKey(parcel);
+      const isSelected = parcelMapKey !== null && selectedKeys.has(parcelMapKey);
       const isRep = isRepresentative(parcel);
 
       // 미선택 마커는 `showUnselected`가 켜져 있을 때만 만든다.
@@ -266,11 +271,13 @@ export function useMarkerLayer({
 
       const marker = createParcelMarker(parcel, latlng, color, isRep, isSelected, map, circleRef, showDistanceCircleRef, onMarkerClickRef);
 
-      const key = parcelKey(parcel);
-      markerByKeyRef.current.set(key, marker);
+      // 키가 없으면 캐시에 등록하지 않는다. 등록하면 서로 다른 필지가 한 항목을
+      // 공유해 먼저 그린 마커의 참조가 유실된다.
+      if (parcelMapKey !== null) markerByKeyRef.current.set(parcelMapKey, marker);
 
       // 폴리곤 centroid 캐시가 있으면 정확한 위치로 보정
-      const cachedCentroid = polygonCentroidCacheRef.current?.get(key);
+      const cachedCentroid =
+        parcelMapKey !== null ? polygonCentroidCacheRef.current?.get(parcelMapKey) : undefined;
       if (cachedCentroid) {
         marker.setLatLng(cachedCentroid);
       }

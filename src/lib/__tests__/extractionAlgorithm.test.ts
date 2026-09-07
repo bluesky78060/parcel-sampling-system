@@ -556,7 +556,7 @@ describe('validateExtraction', () => {
       makeParcel({ farmerId: 'F1', parcelId: '2' }),
       makeParcel({ farmerId: 'F1', parcelId: '3' }),
     ];
-    const exempt = new Set([parcelMatchKey(over[2])]);
+    const exempt = new Set([parcelMatchKey(over[2])!]);
     const v = validateExtraction(over, config, riStatsFor(over), {
       exemptFarmerLimitKeys: exempt,
     });

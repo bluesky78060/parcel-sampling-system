@@ -33,21 +33,24 @@ describe('parcelMatchKey', () => {
   });
 
   /**
-   * PNU가 없고 주소·지번이 모두 빈 필지끼리는 `'__'`라는 같은 키를 갖는다.
-   * 형제 함수 `parcelFarmerKey`는 이 문제를 막는데(빈 값이면 `null` 반환)
-   * 이쪽은 방치돼 있다.
+   * PROJ1-1-37. 예전에는 `'__'`라는 키를 만들어 돌려줬다. 그러면 식별 불가능한
+   * 필지들이 전부 **같은 필지**로 취급돼, 대표필지 태깅이 번지고 dedupe가 한 건으로
+   * 접고 삭제가 무관한 행까지 지웠다.
    *
-   * **PROJ1-1-37로 분리했다.** `null` 반환으로 바꾸려면 호출부 9곳을 용도별로
-   * (Set 구축 / 조회 / dedupe) 함께 정리해야 해서, PROJ1-1-30에 얹으면
-   * 그 수정의 리뷰가 흐려진다.
-   *
-   * 고치면 이 테스트가 실패한다 — 그때 기대값을 `toBeNull()`로 바꾸면 된다.
+   * 형제 함수 `parcelFarmerKey`가 같은 이유로 `null`을 돌려주는데 이쪽만 방치돼 있었다.
    */
-  it('[PROJ1-1-37 미수정] 주소·지번이 모두 비면 전부 같은 키가 된다', () => {
-    const a = makeParcel({ pnu: '', address: '', parcelId: '' });
-    const b = makeParcel({ pnu: '', address: '', parcelId: '' });
-    expect(parcelMatchKey(a)).toBe('__');
-    expect(parcelMatchKey(a)).toBe(parcelMatchKey(b));
+  it('PNU도 주소도 지번도 없으면 키를 만들지 않는다', () => {
+    expect(parcelMatchKey(makeParcel({ pnu: '', address: '', parcelId: '' }))).toBeNull();
+  });
+
+  it('주소만 있어도 키를 만든다', () => {
+    expect(parcelMatchKey(makeParcel({ pnu: '', address: '어느 주소', parcelId: '' }))).toBe(
+      '어느 주소__',
+    );
+  });
+
+  it('지번만 있어도 키를 만든다', () => {
+    expect(parcelMatchKey(makeParcel({ pnu: '', address: '', parcelId: '100' }))).toBe('__100');
   });
 });
 

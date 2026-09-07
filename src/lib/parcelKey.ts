@@ -6,9 +6,22 @@ import type { Parcel } from '../types';
  * 예전에는 같은 공식이 네 곳에 복제돼 있었다(`extractionStore.matchKey`,
  * `extractionAlgorithm.matchesRepKeys`, `validateExtraction` 인라인,
  * `excelExporter.getParcelKey`). 한 곳만 바뀌면 조용히 어긋난다.
+ *
+ * **식별 불가능한 필지에는 `null`을 돌려준다.** 호출부는 용도에 따라 다르게 다뤄야 한다.
+ * - Set 구축: 넣지 않는다
+ * - Set 조회: `false`로 본다
+ * - dedupe: **접지 않고 각각 남긴다** — 빈 키끼리 같은 필지로 볼 근거가 없다
+ * - 삭제: 참조로 비교한다 — 키가 없으면 그것만이 안전하다
  */
-export function parcelMatchKey(p: Parcel): string {
-  return p.pnu || `${p.address}__${p.parcelId}`;
+export function parcelMatchKey(p: Parcel): string | null {
+  if (p.pnu) return p.pnu;
+  // PNU도 주소도 지번도 없으면 이 필지를 식별할 방법이 없다.
+  // 예전에는 `'__'`라는 키를 만들어 돌려줬는데, 그러면 식별 불가능한 필지들이
+  // 전부 **같은 필지**로 취급된다. 대표필지 태깅이 번지고, dedupe가 한 건으로 접고,
+  // 삭제가 무관한 행까지 지운다. 형제 함수 `parcelFarmerKey`가 같은 이유로
+  // `null`을 돌려주는데 이쪽만 방치돼 있었다.
+  if (!p.address && !p.parcelId) return null;
+  return `${p.address}__${p.parcelId}`;
 }
 
 /**

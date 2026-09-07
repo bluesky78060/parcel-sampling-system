@@ -263,7 +263,8 @@ function extractWithDensityOrShuffle(
  * 경영체번호가 비어 있으면 `_필지번호` 형태의 키가 서로 충돌하므로 그 키는 쓰지 않는다.
  */
 function matchesRepKeys(p: Parcel, repKeys: Set<string>): boolean {
-  if (repKeys.has(parcelMatchKey(p))) return true;
+  const mk = parcelMatchKey(p);
+  if (mk !== null && repKeys.has(mk)) return true;
   const fk = parcelFarmerKey(p);
   return fk !== null && repKeys.has(fk);
 }
@@ -633,7 +634,11 @@ export function validateExtraction(
   // 농가가 식별되는 필지만 센다. 빈 경영체번호를 한 농가로 묶으면 `farmerCounts['']`가
   // 누적돼, 서로 무관한 필지 때문에 고칠 방법이 없는 FARMER_OVER_LIMIT이 뜬다.
   const farmerLimitTargets = (exempt
-    ? selectedParcels.filter(p => !exempt.has(parcelMatchKey(p)))
+    ? selectedParcels.filter(p => {
+        const mk = parcelMatchKey(p);
+        // 키가 없으면 면제 대상으로 지정할 수도 없었다 — 면제하지 않는다
+        return mk === null || !exempt.has(mk);
+      })
     : selectedParcels
   ).filter(hasFarmerId);
   const farmerCounts: Record<string, number> = {};

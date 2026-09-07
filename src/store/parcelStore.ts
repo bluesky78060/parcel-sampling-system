@@ -2,6 +2,22 @@ import { create } from 'zustand';
 import type { Parcel, Statistics, DuplicateResult } from '../types';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
 import { parcelMatchKey } from '../lib/parcelKey';
+import type { Parcel as ParcelForCount } from '../types';
+
+/**
+ * 고유 필지 수. 식별 불가능한 필지(키가 `null`)는 서로 다른 것으로 센다 —
+ * 한 덩어리로 세면 달성 가능 판정이 실제보다 비관적으로 나온다.
+ */
+function countUniqueParcels(parcels: ParcelForCount[]): number {
+  const keys = new Set<string>();
+  let unidentified = 0;
+  for (const p of parcels) {
+    const key = parcelMatchKey(p);
+    if (key === null) unidentified++;
+    else keys.add(key);
+  }
+  return keys.size + unidentified;
+}
 import { useSurveyStore, sampledYearsOf } from './surveyStore';
 
 interface ParcelStore {
@@ -57,10 +73,10 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
         // 고유 필지 기준으로 센다. 단순 합산은 대표필지가 마스터와 겹칠 때
         // 같은 필지를 두 번 세어 "달성 가능"으로 잘못 판정한다 — 분석 화면에서
         // 가능하다고 보고 진행했다가 추출 후에야 목표 미달을 만난다.
-        canMeetTarget: new Set([
-          ...eligible.map(parcelMatchKey),
-          ...representativeParcels.filter(p => p.isEligible).map(parcelMatchKey),
-        ]).size >= totalTarget,
+        canMeetTarget: countUniqueParcels([
+          ...eligible,
+          ...representativeParcels.filter(p => p.isEligible),
+        ]) >= totalTarget,
         representativeParcels: representativeParcels.length,
       },
     });

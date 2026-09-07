@@ -3,6 +3,7 @@ import type { Parcel } from '../../types';
 import { escapeHtml } from '../../lib/htmlUtils';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
 import { isRepresentative } from '../../lib/parcelCategory';
+import { parcelMatchKey } from '../../lib/parcelKey';
 import { useSurveyStore, sampledYearsOf } from '../../store/surveyStore';
 
 // 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
@@ -88,7 +89,17 @@ export function pointInPolygon(point: [number, number], polygon: [number, number
 // dev/prod 모두 같은 주소를 쓴다. (jsonp 헬퍼 참조)
 export const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
 
-/** Build a parcel key from farmerId and parcelId */
-export function parcelKey(parcel: Parcel): string {
-  return `${parcel.farmerId}__${parcel.parcelId}`;
-}
+/**
+ * 지도용 필지 키.
+ *
+ * 예전에는 `${farmerId}__${parcelId}`라는 **자체 공식**을 썼다. `lib/parcelKey.ts`가
+ * "여기 하나만 쓴다"고 선언한 것을 어긴 다섯 번째 복제본이었고, 그 공식은
+ * 경영체번호가 비면 `__100-1` 형태로 **리를 넘어 충돌**한다
+ * (한 농가가 A리·B리에 같은 지번을 가질 수 있다).
+ *
+ * 충돌하면 `markerByKeyRef`에서 먼저 그린 마커의 참조가 유실되고,
+ * 선택되지 않은 필지가 선택 마커로 찍힌다. 정규 키로 통일한다.
+ *
+ * 식별 불가능한 필지에는 `null`이 온다 — 호출부가 캐시·조회에서 건너뛴다.
+ */
+export const parcelKey = parcelMatchKey;

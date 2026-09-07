@@ -11,13 +11,14 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Parcel } from '../../types';
 import { isRepresentative, isPublicPayment } from '../../lib/parcelCategory';
+import { parcelMatchKey } from '../../lib/parcelKey';
 
 interface ResultTableProps {
   parcels: Parcel[];
   selectedParcels: Parcel[];
-  onToggleSelection: (farmerId: string, parcelId: string) => void;
+  onToggleSelection: (parcel: Parcel) => void;
   onAddParcel: (parcel: Parcel) => void;
-  onRemoveParcel: (farmerId: string, parcelId: string) => void;
+  onRemoveParcel: (parcel: Parcel) => void;
   targetCount: number;
   /** 표시용 선택 수. 생략 시 selectedParcels.length (겹치는 필지가 2행으로 잡힘) */
   selectedCount?: number;
@@ -39,7 +40,8 @@ export function ResultTable({
   const selectedSet = useMemo(() => {
     const set = new Set<string>();
     for (const p of selectedParcels) {
-      set.add(`${p.farmerId}__${p.parcelId}`);
+      const key = parcelMatchKey(p);
+      if (key !== null) set.add(key);
     }
     return set;
   }, [selectedParcels]);
@@ -51,8 +53,8 @@ export function ResultTable({
         header: () => <span className="text-xs text-gray-500">선택</span>,
         cell: ({ row }) => {
           const parcel = row.original;
-          const key = `${parcel.farmerId}__${parcel.parcelId}`;
-          const isSelected = selectedSet.has(key);
+          const key = parcelMatchKey(parcel);
+          const isSelected = key !== null && selectedSet.has(key);
           const isRep = isRepresentative(parcel);
 
           if (isRep) {
@@ -69,7 +71,7 @@ export function ResultTable({
             <button
               onClick={() => {
                 if (isSelected) {
-                  onRemoveParcel(parcel.farmerId, parcel.parcelId);
+                  onRemoveParcel(parcel);
                 } else {
                   onAddParcel(parcel);
                 }
@@ -289,8 +291,8 @@ export function ResultTable({
               const row = rows[virtualRow.index];
               if (!row) return null;
               const parcel = row.original;
-              const key = `${parcel.farmerId}__${parcel.parcelId}`;
-              const isSelected = selectedSet.has(key);
+              const key = parcelMatchKey(parcel);
+              const isSelected = key !== null && selectedSet.has(key);
               const isRep = isRepresentative(parcel);
 
               return (

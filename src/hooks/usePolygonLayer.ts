@@ -85,15 +85,15 @@ export function usePolygonLayer({
       const coordParcels: { parcel: Parcel; isSelected: boolean; lat: number; lng: number }[] = [];
 
       for (const p of currentParcels) {
+        // 키가 없으면 선택 여부를 판정할 수 없다 — 미선택으로 본다
+        const pk = parcelKey(p);
+        const isSelected = pk !== null && currentSelectedKeys.has(pk);
         if (p.pnu) {
-          pnuLookup.set(p.pnu, {
-            parcel: p,
-            isSelected: currentSelectedKeys.has(parcelKey(p)),
-          });
+          pnuLookup.set(p.pnu, { parcel: p, isSelected });
         } else if (p.coords) {
           coordParcels.push({
             parcel: p,
-            isSelected: currentSelectedKeys.has(parcelKey(p)),
+            isSelected,
             lat: p.coords.lat,
             lng: p.coords.lng,
           });
@@ -196,6 +196,7 @@ export function usePolygonLayer({
 
           const centroid = computePolygonCentroid(ring);
           const key = parcelKey(match.parcel);
+          if (key === null) continue; // 캐시에 넣을 수도, 마커를 찾을 수도 없다
           const latlng: L.LatLngTuple = [centroid.lat, centroid.lng];
           polygonCentroidCacheRef.current.set(key, latlng);
           const marker = markerByKeyRef.current?.get(key);
