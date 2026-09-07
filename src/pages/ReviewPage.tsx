@@ -8,6 +8,7 @@ import { KakaoMap } from '../components/Map/KakaoMap';
 import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
+import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
 
 type TabId = 'table' | 'map';
 
@@ -193,11 +194,12 @@ export function ReviewPage() {
           <div className="h-4 w-px bg-gray-200" />
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-blue-500" />
-            공익 <span className="font-semibold">{selectedParcels.filter(p => (p.parcelCategory ?? 'public-payment') === 'public-payment').length}</span>
+            공익 <span className="font-semibold">{selectedParcels.filter(p => isPublicPayment(p)).length}</span>
           </span>
           <span className="flex items-center gap-1">
             <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            대표 <span className="font-semibold">{representativeParcels.length}</span>
+            {/* 업로드 건수가 아니라 결과에 실린 수. 상한(representativeTarget)이 걸리면 둘이 다르다 */}
+            대표 <span className="font-semibold">{selectedParcels.filter(p => isRepresentative(p)).length}</span>
           </span>
         </div>
       </div>
@@ -423,7 +425,7 @@ export function ReviewPage() {
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-500">구분</span>
-                    {(selectedMarkerParcel.parcelCategory ?? 'public-payment') === 'representative' ? (
+                    {isRepresentative(selectedMarkerParcel) ? (
                       <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-700">대표필지</span>
                     ) : (
                       <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-100 text-blue-700">공익직불제</span>
@@ -463,7 +465,7 @@ export function ReviewPage() {
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-500">2026 선택</span>
-                    {(selectedMarkerParcel.parcelCategory ?? 'public-payment') === 'representative' ? (
+                    {isRepresentative(selectedMarkerParcel) ? (
                       <span className="font-semibold text-emerald-600">고정 선택</span>
                     ) : (
                       <span

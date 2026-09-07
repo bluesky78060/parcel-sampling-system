@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import type { Parcel } from '../types';
+import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
 import {
   isInBonghwa,
   getMarkerColor,
@@ -173,7 +174,8 @@ export function useMarkerLayer({
     const displayParcels = parcels.filter((p) => {
       if (filterRi && p.ri !== filterRi) return false;
       if (categoryFilter && categoryFilter !== 'all') {
-        return (p.parcelCategory ?? 'public-payment') === categoryFilter;
+        // 'both'(공익 추출에도 뽑힌 대표필지)는 어느 필터에서도 빠지면 안 된다
+        return categoryFilter === 'representative' ? isRepresentative(p) : isPublicPayment(p);
       }
       return true;
     });
@@ -201,7 +203,7 @@ export function useMarkerLayer({
       const isSelected = selectedKeys.has(parcelKey(parcel));
       const color = getMarkerColor(parcel, isSelected);
       const latlng: L.LatLngTuple = [lat, lng];
-      const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
+      const isRep = isRepresentative(parcel);
 
       const marker = createParcelMarker(parcel, latlng, color, isRep, isSelected, map, circleRef, showDistanceCircleRef, onMarkerClickRef);
 

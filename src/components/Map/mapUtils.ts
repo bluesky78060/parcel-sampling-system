@@ -2,6 +2,7 @@ import L from 'leaflet';
 import type { Parcel } from '../../types';
 import { escapeHtml } from '../../lib/htmlUtils';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
+import { isRepresentative } from '../../lib/parcelCategory';
 
 // 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
 // 지오코딩 쪽과 갈라지면서, 통과한 좌표가 마커 단계에서 버려졌다.
@@ -9,7 +10,7 @@ export { BONGHWA_BOUNDS };
 export const isInBonghwa = isInBonghwaBounds;
 
 export function getMarkerColor(parcel: Parcel, isSelected: boolean): string {
-  if ((parcel.parcelCategory ?? 'public-payment') === 'representative' && isSelected) return '#059669';
+  if (isRepresentative(parcel) && isSelected) return '#059669';
   if (isSelected) return '#2563eb';
   if (parcel.sampledYears.includes(2024)) return '#dc2626';
   if (parcel.sampledYears.includes(2025)) return '#ea580c';
@@ -44,7 +45,7 @@ export function createStarIcon(color: string) {
 }
 
 export function createPopupContent(parcel: Parcel, isSelected: boolean): string {
-  const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
+  const isRep = isRepresentative(parcel);
   const categoryBadge = isRep
     ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;">대표필지</span>'
     : '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">공익직불제</span>';

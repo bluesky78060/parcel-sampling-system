@@ -46,10 +46,13 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
               const v = Number(publicPaymentTargetStr);
               if (!isNaN(v) && publicPaymentTargetStr !== '') {
                 const clamped = Math.min(2000, Math.max(0, v));
-                // 대표필지는 총 목표 '안에' 포함되므로 더하지 않는다
+                // 대표필지는 총 목표 '안에' 포함되므로 더하지 않는다.
+                // 총 목표를 줄이면 대표 목표도 따라 줄인다 — 대표가 총 목표보다 크면
+                // 공익 추출분이 전부 밀려나 결과가 전원 대표필지가 된다.
                 onUpdate({
                   publicPaymentTarget: clamped,
                   totalTarget: clamped,
+                  ...(config.representativeTarget > clamped ? { representativeTarget: clamped } : {}),
                 });
                 setPublicPaymentTargetStr(String(clamped));
               } else {
@@ -64,18 +67,20 @@ export function ExtractionSettings({ config, onUpdate }: ExtractionSettingsProps
             대표필지 추출 목표
           </label>
           <p className="text-xs text-gray-400 mb-2">
-            총 목표 안에 넣을 대표필지 수 (0 = 적격 전부)
+            총 목표 안에 넣을 대표필지 수 (0 = 적격 전부, 최대 {Math.min(500, config.publicPaymentTarget || 500)})
           </p>
           <input
             type="number"
             min={0}
-            max={500}
+            max={Math.min(500, config.publicPaymentTarget || 500)}
             value={representativeTargetStr}
             onChange={(e) => setRepresentativeTargetStr(e.target.value)}
             onBlur={() => {
               const v = Number(representativeTargetStr);
               if (!isNaN(v) && representativeTargetStr !== '') {
-                const clamped = Math.min(500, Math.max(0, v));
+                // 총 목표를 넘길 수 없다. 넘기면 공익 추출분이 전부 밀려난다.
+                const cap = config.publicPaymentTarget > 0 ? config.publicPaymentTarget : 500;
+                const clamped = Math.min(500, cap, Math.max(0, v));
                 onUpdate({ representativeTarget: clamped });
                 setRepresentativeTargetStr(String(clamped));
               } else {

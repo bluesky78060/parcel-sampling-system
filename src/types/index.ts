@@ -3,7 +3,18 @@ export interface LatLng {
   lng: number;
 }
 
-export type ParcelCategory = 'public-payment' | 'representative';
+/**
+ * 필지가 어느 경로로 결과에 들어왔는가.
+ *
+ * `'both'`가 필요한 이유: 대표필지가 공익직불제 추출에도 뽑히는 일이 흔한데,
+ * 예전에는 그 경우 카테고리를 `'representative'`로 **덮어써서** 공익직불제 시트에서
+ * 사라졌다. 담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.
+ * 두 성격을 동시에 갖는 상태를 명시적으로 둔다.
+ *
+ * 판정은 `isRepresentative` / `isPublicPayment` 헬퍼를 쓴다.
+ * `=== 'representative'`로 직접 비교하면 `'both'`를 놓친다.
+ */
+export type ParcelCategory = 'public-payment' | 'representative' | 'both';
 
 export interface Parcel {
   farmerId: string;
@@ -107,6 +118,22 @@ export interface ExtractionResult {
   riStats: RiStat[];
   farmerStats: FarmerStat[];
   validation: ValidationResult;
+  /**
+   * 대표필지가 어떻게 줄고 채워졌는지. 상한(`representativeTarget`)이 실제로 필지를
+   * 잘라내므로, 콘솔에만 남기면 사용자는 "올린 대표필지가 왜 다 안 들어갔나"를 알 수 없다.
+   */
+  representativeSummary?: {
+    uploaded: number;
+    eligible: number;
+    /** 실제 적용된 상한 (0 = 전부) */
+    cap: number;
+    /** 상한 적용 후 대상 수 */
+    limited: number;
+    /** 부적격 대표 대신 마스터에서 대체 복사한 수 */
+    supplemented: number;
+    /** 대체하려 했으나 후보가 모자라 못 채운 수 */
+    supplementShortfall: number;
+  };
 }
 
 export interface RiStat {

@@ -10,6 +10,7 @@ import {
 } from '@tanstack/react-table';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Parcel } from '../../types';
+import { isRepresentative, isPublicPayment } from '../../lib/parcelCategory';
 
 interface ResultTableProps {
   parcels: Parcel[];
@@ -52,7 +53,7 @@ export function ResultTable({
           const parcel = row.original;
           const key = `${parcel.farmerId}__${parcel.parcelId}`;
           const isSelected = selectedSet.has(key);
-          const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
+          const isRep = isRepresentative(parcel);
 
           if (isRep) {
             return (
@@ -95,11 +96,17 @@ export function ResultTable({
         id: 'category',
         header: '구분',
         cell: ({ row }) => {
-          const cat = row.original.parcelCategory ?? 'public-payment';
-          return cat === 'representative' ? (
-            <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-700">대표</span>
-          ) : (
-            <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-100 text-blue-700">공익</span>
+          const p = row.original;
+          // 공익 추출에도 뽑힌 대표필지는 두 성격을 다 가지므로 배지도 둘 다 보여준다
+          return (
+            <span className="inline-flex gap-0.5">
+              {isRepresentative(p) && (
+                <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-emerald-100 text-emerald-700">대표</span>
+              )}
+              {isPublicPayment(p) && (
+                <span className="inline-block px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-100 text-blue-700">공익</span>
+              )}
+            </span>
           );
         },
         enableSorting: false,
@@ -284,7 +291,7 @@ export function ResultTable({
               const parcel = row.original;
               const key = `${parcel.farmerId}__${parcel.parcelId}`;
               const isSelected = selectedSet.has(key);
-              const isRep = (parcel.parcelCategory ?? 'public-payment') === 'representative';
+              const isRep = isRepresentative(parcel);
 
               return (
                 <tr

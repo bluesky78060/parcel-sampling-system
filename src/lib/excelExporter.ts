@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx';
 import { saveAs } from 'file-saver';
 import type { Parcel, RiStat, FarmerStat } from '../types';
 import { parseNumericCell } from './excelParser';
+import { isPublicPayment, isRepresentative, categoryLabel } from './parcelCategory';
+import { parcelMatchKey } from './parcelKey';
 
 interface ExportData {
   selectedParcels: Parcel[];
@@ -28,16 +30,17 @@ export function exportToExcel(data: ExportData): void {
   const wb = XLSX.utils.book_new();
   const dupKeys = data.duplicateKeys ?? new Set<string>();
 
-  // 시트 1: 공익직불제 필지선정 (대표필지 제외)
+  // 시트 1: 공익직불제 필지선정 (공익 추출에도 뽑힌 대표필지 'both' 포함)
   const publicPaymentParcels = data.selectedParcels.filter(
-    (p) => (p.parcelCategory ?? 'public-payment') !== 'representative'
+    (p) => isPublicPayment(p)
   );
   const selectedSheet = createSelectedSheet(publicPaymentParcels, dupKeys);
   XLSX.utils.book_append_sheet(wb, selectedSheet, '2026_필지선정');
 
-  // 시트 2: 대표필지 (별도 시트, 동일 포맷)
+  // 시트 2: 대표필지 (별도 시트, 동일 포맷). 'both'는 시트 1에도 실리므로
+  // 두 시트를 합치는 사람이 이중 계상하지 않도록 '중복여부'에 O를 찍는다
   const repParcels = data.selectedParcels.filter(
-    (p) => (p.parcelCategory ?? 'public-payment') === 'representative'
+    (p) => isRepresentative(p)
   );
   if (repParcels.length > 0) {
     const repSheet = createSelectedSheet(repParcels, dupKeys);
@@ -120,9 +123,8 @@ function getRawNum(p: Parcel, ...keys: string[]): number {
   return isNaN(n) ? 0 : n;
 }
 
-function getParcelKey(p: Parcel): string {
-  return p.pnu || `${p.address}__${p.parcelId}`;
-}
+// 키 공식은 lib/parcelKey 하나만 쓴다
+const getParcelKey = parcelMatchKey;
 
 function createSelectedSheet(parcels: Parcel[], duplicateKeys: Set<string> = new Set()): XLSX.WorkSheet {
   // 첫 컬럼: 중복여부, 이후 원본 파일 컬럼 기준
@@ -138,7 +140,10 @@ function createSelectedSheet(parcels: Parcel[], duplicateKeys: Set<string> = new
 
   const dataRows = parcels.map(p => {
     const key = getParcelKey(p);
-    const isDup = duplicateKeys.has(key) ? 'O' : '';
+    // 파일 대조 키(duplicateKeys)는 대표필지 파일에 PNU가 없고 주소 표기가 다르면
+    // 비어 버린다. 결과가 이미 아는 사실('both' = 양쪽 시트에 실림)을 먼저 쓴다.
+    const inBothSheets = isRepresentative(p) && isPublicPayment(p);
+    const isDup = inBothSheets || duplicateKeys.has(key) ? 'O' : '';
     return [
       isDup,                                                                       // 중복여부
       p.farmerId,                                                                  // 직불신청_경영체번호
@@ -231,7 +236,7 @@ function createExcludedSheet(parcels: Parcel[]): XLSX.WorkSheet {
 
 function createAllParcelsSheet(parcels: Parcel[]): XLSX.WorkSheet {
   const rows = parcels.map(p => ({
-    '구분': (p.parcelCategory ?? 'public-payment') === 'representative' ? '대표필지' : '공익직불제',
+    '구분': categoryLabel(p),
     '경영체번호': p.farmerId,
     '경영체명': p.farmerName,
     '시도': p.sido,

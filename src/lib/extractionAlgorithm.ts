@@ -11,6 +11,7 @@ import type {
 } from '../types';
 import { calculateDensity, clusterParcelsInRi, calculateRiCentroids, findDistantRis, findDistantPairs, haversineDistance, meanPlusTwoSigma } from './spatialUtils';
 import { parseNumericCell } from './excelParser';
+import { parcelMatchKey, parcelFarmerKey } from './parcelKey';
 
 /**
  * 실지목 우선, 없으면 공부지목, 둘 다 없으면 '미분류'
@@ -261,8 +262,9 @@ function extractWithDensityOrShuffle(
  * 경영체번호가 비어 있으면 `_필지번호` 형태의 키가 서로 충돌하므로 그 키는 쓰지 않는다.
  */
 function matchesRepKeys(p: Parcel, repKeys: Set<string>): boolean {
-  if (repKeys.has(p.pnu || `${p.address}__${p.parcelId}`)) return true;
-  return !!p.farmerId && repKeys.has(`${p.farmerId}_${p.parcelId}`);
+  if (repKeys.has(parcelMatchKey(p))) return true;
+  const fk = parcelFarmerKey(p);
+  return fk !== null && repKeys.has(fk);
 }
 
 /**
@@ -568,9 +570,8 @@ export function validateExtraction(
   const warnings: ValidationMessage[] = [];
 
   // 총 추출 수 검증
-  // 목표는 호출자가 넘긴 값을 우선한다. `config.totalTarget`은 사용자가 입력한
-  // 두 수의 합일 뿐이고, 대표필지는 `representativeTarget`을 상한으로 쓰지 않으며
-  // (0은 "전부 포함"을 뜻한다) 공익 추출과 겹치기까지 하므로 실제 결과와 다르다.
+  // 목표는 호출자가 넘긴 값을 우선한다. 대표필지는 총 목표 '안에' 들어가므로
+  // `representativeTarget`(상한, 0은 "전부 포함")을 더한 값은 실제 결과와 다르다.
   const totalTarget = options?.totalTarget ?? config.totalTarget;
   if (selectedParcels.length !== totalTarget) {
     const level = Math.abs(selectedParcels.length - totalTarget) > 10 ? errors : warnings;
@@ -585,7 +586,7 @@ export function validateExtraction(
   // 이 제한으로 재면 고칠 방법이 없는 오류가 뜬다. 그 키만 면제한다.
   const exempt = options?.exemptFarmerLimitKeys;
   const farmerLimitTargets = exempt
-    ? selectedParcels.filter(p => !exempt.has(p.pnu || `${p.address}__${p.parcelId}`))
+    ? selectedParcels.filter(p => !exempt.has(parcelMatchKey(p)))
     : selectedParcels;
   const farmerCounts: Record<string, number> = {};
   for (const p of farmerLimitTargets) {
