@@ -1,0 +1,26 @@
+name: Test
+
+on:
+  push:
+    branches-ignore: [main] # main은 Deploy 워크플로가 같은 검사를 돌린다
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run test
+
+      # 타입 검사를 겸한다 (build 스크립트가 `tsc -b && vite build`).
+      # API 키가 없어도 빌드는 통과한다 — 키는 런타임에만 쓰인다.
+      - run: npm run build
