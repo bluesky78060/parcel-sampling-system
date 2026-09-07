@@ -78,7 +78,9 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
   },
 
   reset: () => {
-    clearGeocodeCache();
+    // zustand action은 동기라 기다릴 수 없다. reset 직후 지오코딩을 시작하는
+    // 경로는 없으므로(파일 업로드부터 다시 한다) 여기서는 경합이 문제되지 않는다.
+    void clearGeocodeCache();
     set({
       allParcels: [],
       sampled2024: [],

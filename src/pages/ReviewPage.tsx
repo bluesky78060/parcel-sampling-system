@@ -244,7 +244,7 @@ export function ReviewPage() {
                     </p>
                   </div>
                 </div>
-                {!geocoding.state.isRunning && !geocoding.state.isComplete && (
+                {!geocoding.state.isRunning && !geocoding.state.isComplete && !geocoding.state.serviceDown && (
                   <button
                     onClick={runGeocodingInReview}
                     className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 text-white text-sm font-medium rounded-lg hover:bg-orange-700 transition-colors flex-shrink-0 ml-4"
@@ -265,10 +265,24 @@ export function ReviewPage() {
                     </button>
                   </div>
                 )}
-                {geocoding.state.isComplete && (
+                {geocoding.state.isComplete && geocoding.state.summary && (
                   <span className="text-sm text-green-700 font-medium ml-4">
-                    변환 완료 ({geocoding.state.progress.done - geocoding.state.progress.failed}건 성공)
+                    변환 완료 ({geocoding.state.summary.resolved.toLocaleString()}건 성공)
                   </span>
+                )}
+                {/* 서버 장애는 "완료"가 아니다. 원인과 다음 행동을 같이 보여준다. */}
+                {geocoding.state.serviceDown && !geocoding.state.isRunning && (
+                  <div className="ml-4 flex items-center gap-3 flex-shrink-0">
+                    <span className="text-sm text-red-700 font-medium">
+                      서버 응답 없음 — 중단됨
+                    </span>
+                    <button
+                      onClick={runGeocodingInReview}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-orange-600 rounded-md hover:bg-orange-700"
+                    >
+                      다시 시도
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

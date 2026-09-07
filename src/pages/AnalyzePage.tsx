@@ -265,7 +265,9 @@ export function AnalyzePage() {
     setAnalysisError(null);
 
     try {
-      clearGeocodeCache();
+      // 캐시가 실제로 비워진 뒤에 시작해야 한다. 기다리지 않으면 재변환이
+      // 삭제 중인 IndexedDB에서 낡은 좌표를 다시 읽는다.
+      await clearGeocodeCache();
       geocoding.resetState();
 
       const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
@@ -590,7 +592,7 @@ export function AnalyzePage() {
           </div>
 
           {/* 좌표 변환 (수동 실행) */}
-          {geocoding.isAvailable && !geocoding.state.isRunning && !geocoding.state.isComplete && (
+          {geocoding.isAvailable && !geocoding.state.isRunning && !geocoding.state.isComplete && !geocoding.state.serviceDown && (
             <div className="rounded-lg border border-blue-100 bg-blue-50 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
@@ -629,15 +631,20 @@ export function AnalyzePage() {
           )}
 
           {/* Geocoding 진행률 */}
-          {(geocoding.state.isRunning || geocoding.state.isComplete) && (
+          {(geocoding.state.isRunning || geocoding.state.isComplete || geocoding.state.serviceDown) && (
             <div className="space-y-2">
-              <GeocodingProgress
-                done={geocoding.state.progress.done}
-                total={geocoding.state.progress.total}
-                failed={geocoding.state.progress.failed}
-                isRunning={geocoding.state.isRunning}
-                onCancel={geocoding.cancelGeocoding}
-              />
+              <GeocodingProgress state={geocoding.state} onCancel={geocoding.cancelGeocoding} />
+              {geocoding.state.serviceDown && !geocoding.state.isRunning && (
+                <button
+                  onClick={runGeocoding}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  다시 시도
+                </button>
+              )}
               {geocoding.state.isComplete && !geocoding.state.isRunning && (
                 <button
                   onClick={rerunGeocoding}
@@ -653,13 +660,30 @@ export function AnalyzePage() {
           )}
 
           {/* Geocoding 오류 */}
+          {/*
+            서버 장애와 그 밖의 오류를 색과 문구로 갈라놓는다. 예전에는 둘 다
+            "Geocoding 오류"라 사용자가 자기 데이터를 의심하며 재시도를 반복했다.
+          */}
           {geocoding.state.error && (
-            <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
+            <div
+              className={
+                geocoding.state.serviceDown
+                  ? 'rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800'
+                  : 'rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800'
+              }
+            >
               <div className="flex items-start gap-2">
                 <svg className="w-4 h-4 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
-                <span>Geocoding 오류: {geocoding.state.error}</span>
+                <div>
+                  <span>{geocoding.state.serviceDown ? geocoding.state.error : `Geocoding 오류: ${geocoding.state.error}`}</span>
+                  {geocoding.state.serviceDown && (
+                    <p className="mt-1 text-xs text-red-600">
+                      좌표 없이도 추출·검토·내보내기는 정상 동작합니다. 좌표는 나중에 다시 변환하면 됩니다.
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           )}

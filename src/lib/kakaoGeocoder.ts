@@ -1,7 +1,7 @@
 import type { LatLng } from '../types';
 import { normalizeAddress, normalizeAddressLotNumber } from './addressParser';
 import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
-import { jsonp } from './jsonp';
+import { jsonp, JsonpNetworkError, JsonpTimeoutError } from './jsonp';
 
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
@@ -37,6 +37,27 @@ export class RateLimitError extends Error {
   constructor(provider: string) {
     super(`Rate limited by ${provider}`);
     this.name = 'RateLimitError';
+  }
+}
+
+/**
+ * 서버가 응답하지 않아 좌표를 얻지 못했을 때.
+ *
+ * "좌표를 못 찾았다"(null)와 반드시 구분해야 한다. 2026-09-06 장애에서 VWORLD가
+ * 502를 돌려주는 동안 geocodeVworld가 네트워크 오류를 삼키고 null을 반환했고,
+ * 호출자는 그것을 "이 주소에는 좌표가 없다"로 받아들여 4만 건을 끝까지 시도했다.
+ *
+ * JSONP는 script 태그로 부르므로 HTTP 상태 코드를 볼 수 없다. 502인지 503인지
+ * DNS 실패인지 구분이 불가능하다는 뜻이라, 메시지에 특정 상태 코드를 적지 않는다.
+ */
+export class GeocodeServiceError extends Error {
+  // 파라미터 프로퍼티는 erasableSyntaxOnly에서 쓸 수 없어 명시 필드로 둔다
+  readonly kind: GeocodeFailureKind;
+
+  constructor(message: string, kind: GeocodeFailureKind = 'unreachable') {
+    super(message);
+    this.name = 'GeocodeServiceError';
+    this.kind = kind;
   }
 }
 
@@ -176,8 +197,25 @@ function isAuthError(text: string): boolean {
   return /인증키|인증|권한|\bAPI_?KEY\b|\bAUTH\w*\b/i.test(text);
 }
 
-/** 서로 다른 리 이만큼이 같은 인증 오류로 죽으면 영구 실패로 본다 */
-const AUTH_FAIL_RI_THRESHOLD = 2;
+/**
+ * VWORLD ERROR 응답이 인증 문제인지 — 이 파일의 **유일한** 판정 기준.
+ *
+ * 예전에는 호출 지점마다 달랐다. Phase 0와 헬스체크는 `isAuthError(text)`를,
+ * 주소 지오코딩만 `code.includes('KEY')`를 썼다. VWORLD가 code 없이 text만 보내면
+ * 주소 경로만 인증 오류를 놓치고 "이 주소에 좌표가 없다"로 집계했다.
+ */
+function isAuthErrorResponse(err?: { code?: string; text?: string }): boolean {
+  return isAuthError(err?.text ?? '') || (err?.code ?? '').toUpperCase().includes('KEY');
+}
+
+/**
+ * 한 건도 성공하지 못한 상태에서 서로 다른 리 이만큼이 죽으면 서비스 장애로 본다.
+ *
+ * 원래는 인증 오류에만 적용했다. 2026-09-06 VWORLD 502 장애에서 그 조건이
+ * 무의미했다 — 502는 JSONP script 로드 실패로 나타나므로 인증 오류 문구를
+ * 띄우지 않는다. 그래서 앱이 4만 건을 끝까지 시도했다. 사유를 가리지 않는다.
+ */
+const SERVICE_DOWN_RI_THRESHOLD = 2;
 
 /** 리 하나에서 넘길 최대 페이지 수 (실측 최대 5페이지) */
 const MAX_PAGES_PER_RI = 20;
@@ -456,12 +494,22 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
 
   // VWORLD 우선 시도
   const vworldKey = getVworldKey();
+  let serviceError: GeocodeServiceError | null = null;
   if (vworldKey) {
-    const result = await geocodeVworld(address, vworldKey);
-    if (result && isValidBonghwaCoord(result)) {
-      cacheSet(cacheKey, result);
-      setToIDB(cacheKey, result); // fire-and-forget
-      return result;
+    try {
+      const result = await geocodeVworld(address, vworldKey);
+      if (result && isValidBonghwaCoord(result)) {
+        cacheSet(cacheKey, result);
+        setToIDB(cacheKey, result); // fire-and-forget
+        return result;
+      }
+    } catch (err) {
+      if (err instanceof GeocodeServiceError) {
+        // 아직 던지지 않는다. Kakao 폴백이 살아 있으면 그쪽으로 좌표를 얻을 수 있다.
+        serviceError = err;
+      } else {
+        throw err;
+      }
     }
   }
 
@@ -476,6 +524,9 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
     }
   }
 
+  // 모든 경로가 서버 미응답으로 끝났다 — null(좌표 없음)로 위장시키지 않는다
+  if (serviceError) throw serviceError;
+
   return null;
 }
 
@@ -484,6 +535,12 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
  * - 지번 주소 검색 → 도로명 주소 검색 순서
  */
 async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | null> {
+  // 서버가 응답하지 않은 횟수. 좌표를 못 찾은 것과 구분하려고 따로 센다.
+  let unreachable = 0;
+  // 서버가 한 번이라도 답했는가. 답했다면 서버는 살아 있는 것이므로,
+  // 다른 시도가 네트워크 오류로 죽었더라도 장애로 보고하지 않는다.
+  let responded = false;
+
   // 지번 → 도로명 순으로 시도한다
   for (const type of ['parcel', 'road'] as const) {
     const label = type === 'parcel' ? '지번' : '도로명';
@@ -508,10 +565,21 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
           throw new RateLimitError('vworld');
         }
         console.warn(`[vworld] ${label} 오류: ${res.error?.code ?? ''} ${res.error?.text ?? ''}`);
-        // 인증키 문제라면 도로명으로 재시도해도 같은 결과다
-        if ((res.error?.code ?? '').toUpperCase().includes('KEY')) return null;
+        // 인증키 문제는 도로명으로 재시도해도 같은 결과다. 그리고 이것은 "이 주소에
+        // 좌표가 없다"가 아니다 — null로 돌려주면 데이터 문제로 집계되어 4만 건을
+        // 끝까지 시도하게 된다. VWORLD는 API별로 키를 따로 등록하므로, 데이터 API가
+        // 멀쩡해도 지오코딩 API만 거부될 수 있다.
+        if (isAuthErrorResponse(res.error)) {
+          throw new GeocodeServiceError(
+            `VWORLD 지오코딩이 인증키를 거부했습니다: ${res.error?.text ?? ''}`, 'auth');
+        }
+        // 그 밖의 ERROR는 서버가 답한 것이므로 생존 신호로 본다
+        responded = true;
         continue;
       }
+
+      // 정상 응답 — 결과가 없어도 서버는 살아 있다
+      responded = true;
 
       const point = res?.result?.point;
       if (res?.status === 'OK' && point) {
@@ -521,9 +589,22 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
       if (elapsed > 500) console.info(`  △ VWORLD ${label} 결과없음 (${elapsed}ms): ${address}`);
     } catch (err) {
       if (err instanceof RateLimitError) throw err;
+      // 키 거부는 도로명으로 바꿔도 같은 답이다. 여기서 삼키면 호출자가
+      // "이 주소에 좌표가 없다"로 받아들여 4만 건을 끝까지 시도한다.
+      if (err instanceof GeocodeServiceError) throw err;
       if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      if (err instanceof JsonpNetworkError || err instanceof JsonpTimeoutError) unreachable++;
       console.warn(`[vworld] ${label} 검색 오류:`, err);
     }
+  }
+
+  // 서버가 한 번도 답하지 않은 채 미응답만 관측됐다면 데이터 문제가 아니다.
+  //
+  // `unreachable > 0`만 보면 안 된다. 지번 조회가 일시적 패킷 유실로 죽고 도로명은
+  // 정상 응답(결과 없음)한 경우까지 서버 장애로 보고하게 되고, 그 오탐이 배치 단위
+  // 조기 중단으로 증폭된다. 정상 응답이 한 번이라도 있었으면 서버는 살아 있다.
+  if (unreachable > 0 && !responded) {
+    throw new GeocodeServiceError('VWORLD 지오코딩 서버가 응답하지 않습니다');
   }
 
   return null;
@@ -607,13 +688,16 @@ export function getCachedCoords(address: string): LatLng | null {
 /**
  * 캐시 초기화
  */
-export function clearGeocodeCache(): void {
+export async function clearGeocodeCache(): Promise<void> {
   geocodeCache.clear();
   pnuFailCache.clear();
   pnuAttempts = 0;
   pnuSuccesses = 0;
   pnuDisabled = false;
-  clearIDBCache(); // fire-and-forget
+  // IndexedDB 삭제를 기다린다. 예전에는 fire-and-forget이라, 재변환이 곧바로
+  // warmupCache()를 돌리면 아직 지워지지 않은 낡은 좌표를 다시 읽어 들였다.
+  // 캐시 회수가 네트워크보다 앞에 있는 지금은 그 낡은 값이 곧장 결과가 된다.
+  await clearIDBCache();
 }
 
 /**
@@ -644,19 +728,46 @@ export function getSnappedCoord(pnu: string): LatLng | null {
  * 주의: VWORLD 데이터 API는 Referer(등록 도메인)를 검증한다. 브라우저에서는
  * 자동으로 붙지만, 서버에서 호출하면 "인증키 정보가 올바르지 않습니다"가 나온다.
  */
+/** VWORLD가 왜 실패했는가 — 사용자 문구와 조치를 가르는 기준 */
+export type GeocodeFailureKind = 'auth' | 'unreachable' | 'quota';
+
+export interface PnuPrefetchResult {
+  /** 이번 실행에서 새로 좌표를 얻은 PNU 수 */
+  snapped: number;
+  /** 조회에 실패한 리 코드 */
+  failedRi: string[];
+  /** 서비스 장애로 판단해 남은 리를 포기했는가 */
+  serviceDown: boolean;
+  failureKind: GeocodeFailureKind | null;
+  /** 마지막으로 관측한 실패 사유 (로그·디버깅용) */
+  lastError: string | null;
+}
+
+const EMPTY_PREFETCH: PnuPrefetchResult = {
+  snapped: 0, failedRi: [], serviceDown: false, failureKind: null, lastError: null,
+};
+
 export async function prefetchPolygonsByPnu(
   pnus: string[],
-  options?: { signal?: AbortSignal; onProgress?: (done: number, total: number) => void }
-): Promise<number> {
+  options?: {
+    signal?: AbortSignal;
+    /**
+     * 리 완료 수와 함께 **실제로 스냅한 PNU 수**를 준다. 호출자가 리 완료율을 필지
+     * 수로 환산해 진행률로 쓰면 지적도에 없는 PNU가 많을 때 확보 0건에 진행률 100%가
+     * 뜬다 — 장애 화면에서 "다 됐는데 결과가 없다"로 읽히는 바로 그 표시다.
+     */
+    onProgress?: (riDone: number, riTotal: number, snapped: number) => void;
+  }
+): Promise<PnuPrefetchResult> {
   const vworldKey = getVworldKey();
-  if (!vworldKey) return 0;
+  if (!vworldKey) return EMPTY_PREFETCH;
 
   // 이미 스냅 캐시에 있거나, 연속지적도에 없다고 판명된 PNU는 제외한다.
   // 후자를 빼지 않으면 미해결 몇 건 때문에 리를 통째로 다시 내려받게 된다.
   const uncached = pnus.filter(
     pnu => pnu && !geocodeCache.has(`snap:${pnu}`) && !pnuFailCache.has(pnu)
   );
-  if (uncached.length === 0) return 0;
+  if (uncached.length === 0) return EMPTY_PREFETCH;
 
   // 리(里) 코드(앞 10자리)로 묶는다
   const byRiCode = new Map<string, Set<string>>();
@@ -679,9 +790,43 @@ export async function prefetchPolygonsByPnu(
   const entries = [...byRiCode.entries()];
   let snappedCount = 0;
   let done = 0;
-  let authFailed = false;
+  let serviceDown = false;
+  // 실패 사유별 리 개수. 먼저 온 사유가 굳지 않도록 카운트로 정한다.
+  // (auth 우선 규칙은 quota 도입 전의 것이라, 리1이 한도·리2가 인증이면 한도가 묻혔다)
+  const kindCounts: Record<GeocodeFailureKind, number> = { auth: 0, quota: 0, unreachable: 0 };
+  let lastError: string | null = null;
   const failedRi = new Set<string>();
-  const authErrorRis = new Set<string>();
+
+  /**
+   * 서버가 응답하지 않은 채 죽은 리의 **연속** 누적.
+   *
+   * 청크에서 서버 응답이 한 번이라도 있으면 비운다. 누적 성공 건수로 판정하면
+   * "처음부터 죽은" 경우만 잡고 실행 중 장애는 통과시킨다 — 성공 건수는 단조
+   * 증가하므로 한 번 성공한 뒤에는 가드가 영영 무장되지 않기 때문이다.
+   */
+  const deadRiStreak = new Set<string>();
+
+  /**
+   * 이번 청크에서 서버가 정상 응답했는가.
+   *
+   * 판정을 리 콜백 안에서 하면 같은 청크의 늦은 성공이 이미 선 판정을 되돌리지
+   * 못한다(리 A·B가 먼저 죽고 C가 곧이어 1,000건을 스냅해도 중단된 채로 끝난다).
+   * 그래서 기록만 하고 판정은 `await Promise.all` 뒤 청크 경계에서 한 번만 한다.
+   *
+   * "결과가 비어 있는 응답"도 생존 신호다. 신규 스냅 건수로 대신하면 캐시가 차 있는
+   * 재개 실행에서 서버가 멀쩡해도 장애로 오판한다.
+   */
+  let chunkSawResponse = false;
+  /** 이번 청크에서 미응답으로 죽은 리 */
+  let chunkDeadRi: string[] = [];
+
+  /** 리 하나의 조회가 최종 실패했음을 기록한다. 판정은 하지 않는다. */
+  const recordRiFailure = (riCode: string, kind: GeocodeFailureKind, message: string) => {
+    failedRi.add(riCode);
+    lastError = message;
+    kindCounts[kind]++;
+    chunkDeadRi.push(riCode);
+  };
 
   console.group(`[PNU 스냅] 리 ${byRiCode.size}개 / PNU ${uncached.length.toLocaleString()}건`);
 
@@ -690,8 +835,10 @@ export async function prefetchPolygonsByPnu(
   let cursor = 0;
 
   while (cursor < entries.length) {
-    if (options?.signal?.aborted || authFailed) break;
+    if (options?.signal?.aborted || serviceDown) break;
 
+    chunkSawResponse = false;
+    chunkDeadRi = [];
     const chunk = entries.slice(cursor, cursor + concurrency);
     cursor += chunk.length;
     if (cursor > chunk.length) await sleep(150, options?.signal); // 연속 호출 사이 짧은 간격
@@ -738,20 +885,18 @@ export async function prefetchPolygonsByPnu(
                 // VWORLD는 과부하일 때도 같은 문구를 돌려주므로 메시지만으로 단정할 수
                 // 없다. 한 건도 성공하지 못한 상태에서 서로 다른 리 2개가 같은 이유로
                 // 죽었을 때만 영구 실패로 보고 접는다.
-                if (isAuthError(text) && snappedCount === 0) {
-                  authErrorRis.add(riCode);
-                  if (authErrorRis.size >= AUTH_FAIL_RI_THRESHOLD) {
-                    console.error(
-                      `[vworld] 리 ${authErrorRis.size}개가 연속 인증 오류 — PNU 일괄 조회를 중단합니다: ${text}`
-                    );
-                    authFailed = true;
-                    failedRi.add(riCode);
-                    return;
-                  }
-                }
+                recordRiFailure(
+                  riCode,
+                  isRateLimited(res.response.error) ? 'quota'
+                    : isAuthErrorResponse(res.response.error) ? 'auth'
+                    : 'unreachable',
+                  text,
+                );
                 console.warn(`  ${riCode} p${page} 조회 실패(${PNU_FETCH_RETRIES}회): ${text}`);
                 break;
               }
+              // 결과가 비어 있어도 서버는 답한 것이다 — 생존 신호로 기록한다
+              chunkSawResponse = true;
               data = res;
               break;
             } catch (err) {
@@ -760,10 +905,15 @@ export async function prefetchPolygonsByPnu(
                 await sleep(800 * (attempt + 1), options?.signal);
                 continue;
               }
+              // 502·타임아웃·DNS 실패가 전부 여기로 온다. 예전에는 이 경로가
+              // 실패로 집계되지 않아 서버가 죽어도 4만 건을 끝까지 돌았다.
+              recordRiFailure(riCode, 'unreachable', err instanceof Error ? err.message : String(err));
               console.warn(`  ${riCode} p${page} 예외:`, err);
             }
           }
 
+          // recordRiFailure가 이미 기록한 경우가 대부분이지만, 어느 경로로 오든
+          // 실패 리 집합에는 반드시 들어가야 한다(Set이므로 중복은 무해).
           if (!data) { failedRi.add(riCode); break; }
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -823,8 +973,23 @@ export async function prefetchPolygonsByPnu(
       // 진행 보고는 try 밖에 둔다. 호출자 콜백(React setState)이 던졌을 때
       // 이미 성공한 리가 실패로 기록되면 안 된다.
       done++;
-      options?.onProgress?.(done, byRiCode.size);
+      options?.onProgress?.(done, byRiCode.size, snappedCount);
     }));
+
+    // ── 청크 경계에서 한 번만 판정한다 ──
+    if (chunkSawResponse) {
+      // 서버가 살아 있다. 이 청크에서 죽은 리는 개별 리의 문제이므로 연속을 끊는다.
+      deadRiStreak.clear();
+    } else {
+      for (const ri of chunkDeadRi) deadRiStreak.add(ri);
+      if (deadRiStreak.size >= SERVICE_DOWN_RI_THRESHOLD) {
+        serviceDown = true;
+        console.error(
+          `[vworld] 서버 응답 없이 리 ${deadRiStreak.size}개가 연속 실패 — ` +
+          `PNU 일괄 조회를 중단합니다: ${lastError ?? '원인 불명'}`
+        );
+      }
+    }
   }
 
   console.info(
@@ -832,5 +997,106 @@ export async function prefetchPolygonsByPnu(
     (failedRi.size > 0 ? ` — 조회 실패 리 ${failedRi.size}개: ${[...failedRi].slice(0, 10).join(', ')}` : '')
   );
   console.groupEnd();
-  return snappedCount;
+  // 사유는 지배적 관측으로 정한다. 동수는 unreachable로 떨어뜨린다 —
+  // 한도를 잘못 붙이면 사용자가 하루를 버리고, 미응답은 재시도가 무해하기 때문이다.
+  // (VWORLD는 과부하일 때도 인증키 문구를 돌려주므로 최종 안내는 헬스체크와 대조한다)
+  const failureKind: GeocodeFailureKind | null =
+    kindCounts.quota + kindCounts.auth + kindCounts.unreachable === 0 ? null
+      : kindCounts.quota > kindCounts.auth + kindCounts.unreachable ? 'quota'
+      : kindCounts.auth > kindCounts.unreachable ? 'auth'
+      : 'unreachable';
+
+  return {
+    snapped: snappedCount,
+    failedRi: [...failedRi],
+    serviceDown,
+    failureKind,
+    lastError,
+  };
+}
+
+/**
+ * 변환을 시작하기 전에 VWORLD가 살아 있는지 1건으로 확인한다.
+ *
+ * 조기 중단만으로도 장애는 감지되지만, 리 2개가 재시도(45초×3)를 소진해야 하므로
+ * 최악 4분이 걸린다. 시작 전 8초짜리 조회 하나면 같은 사실을 알 수 있다.
+ *
+ * 이 판정은 변환 시작을 실제로 막는다. 그래서 단판으로 끝내지 않는다 — 공유기가
+ * 순간 튀는 것만으로 4만 건 작업이 시작조차 못 하면 안 되므로 2회까지 시도한다.
+ * 그래도 실패하면 차단하되, 화면에 "다시 시도" 버튼을 남긴다.
+ */
+const HEALTHCHECK_ATTEMPTS = 2;
+
+/** 헬스체크용 리 코드 (봉화군 봉화읍 내성리) */
+const HEALTHCHECK_RI_PREFIX = '4792025021';
+
+export async function checkGeocodingService(
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; kind: GeocodeFailureKind | null; message: string | null }> {
+  const vworldKey = getVworldKey();
+  // VWORLD를 쓰지 않는 구성(dev의 Kakao 전용)에서 VWORLD 생존을 물을 이유가 없다.
+  // 여기서 false를 돌려주면 멀쩡한 Kakao 폴백까지 차단된다.
+  if (!vworldKey) return { ok: true, kind: null, message: null };
+
+  let last: { ok: boolean; kind: GeocodeFailureKind | null; message: string | null } = {
+    ok: false, kind: 'unreachable', message: '확인하지 못했습니다',
+  };
+
+  for (let attempt = 0; attempt < HEALTHCHECK_ATTEMPTS; attempt++) {
+    if (attempt > 0) await sleep(600, signal);
+    last = await probeGeocodingService(vworldKey, signal);
+    if (last.ok) return last;
+    // 인증 거부라고 해서 여기서 끊지 않는다. VWORLD는 부하가 걸리면 정상 키에도
+    // "인증키 정보가 올바르지 않습니다"를 돌려준다(이 파일 아래 재시도 주석 참조).
+    // 그 한 번의 응답으로 4만 건 변환을 막으면서 "배포 키를 확인하라"고 안내하면,
+    // 사용자는 멀쩡한 키를 고치러 간다.
+  }
+  return last;
+}
+
+async function probeGeocodingService(
+  vworldKey: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; kind: GeocodeFailureKind | null; message: string | null }> {
+  try {
+    const res = await jsonp<VworldResponse>(VWORLD_DATA_URL, {
+      service: 'data',
+      request: 'GetFeature',
+      data: 'LP_PA_CBND_BUBUN',
+      key: vworldKey,
+      format: 'json',
+      geometry: 'false',
+      crs: 'EPSG:4326',
+      // 리 하나로 좁힌다. 군 전체(`47920%`)를 LIKE로 걸면 size=1이어도 서버가
+      // 스캔 비용을 치를 수 있고, 그 지연이 헬스체크 타임아웃으로 오인된다.
+      attrFilter: `pnu:like:${HEALTHCHECK_RI_PREFIX}%`,
+      size: '1',
+      page: '1',
+    }, { signal, timeoutMs: 8000 });
+
+    if (res.response?.status === 'ERROR') {
+      const text = res.response.error?.text ?? '알 수 없는 오류';
+      // 한도 초과에 "잠시 후 다시 시도하세요"라고 안내하면 사용자가 몇 분마다
+      // 재시도하며 이미 소진된 한도를 계속 태운다. 세 종류를 여기서 갈라놓는다.
+      const kind: GeocodeFailureKind = isRateLimited(res.response.error) ? 'quota'
+        : isAuthErrorResponse(res.response.error) ? 'auth'
+        : 'unreachable';
+      return { ok: false, kind, message: text };
+    }
+    return { ok: true, kind: null, message: null };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') throw err;
+    // 타임아웃은 "죽었다"가 아니라 "확인하지 못했다"이다. 이걸로 변환을 막으면
+    // 서버가 잠깐 느린 것만으로 4만 건 작업이 시작조차 못 한다. 실행 중 감지는
+    // 조기 중단이 맡으므로, 여기서는 통과시키고 그쪽에 넘긴다.
+    if (err instanceof JsonpTimeoutError) {
+      console.warn('[vworld] 사전 확인이 시간 내에 끝나지 않았습니다 — 그대로 진행합니다');
+      return { ok: true, kind: null, message: null };
+    }
+    return {
+      ok: false,
+      kind: 'unreachable',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
