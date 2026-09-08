@@ -53,12 +53,18 @@ const farmerKey = parcelFarmerKey;
  * **검토 화면에서 문단리의 농가 미상 지번 100을 한 건 빼면 내성리의 것도 함께
  * 700건에서 사라졌다.** 화면에는 아무 표시도 없었다.
  *
- * 정규 키로 비교하되, 키가 없는(식별 불가능한) 필지는 **참조로만** 판정한다 —
- * 그것이 유일하게 안전하다.
+ * 키가 있으면 **필지 단위**로 판정한다. 사용자가 보는 단위가 그것이기 때문이다 —
+ * 화면의 선택 수도, 엑셀 출력도 겹치는 필지를 1건으로 접는다. 한 행만 지우면
+ * 카운트는 그대로이고 체크박스도 켜져 있어 클릭이 먹히지 않은 것으로 보인다.
+ *
+ * 키가 없으면 **행 단위**(`rowUid`)로 판정한다. 예전에는 참조로 비교했는데,
+ * `addParcel`이 `{...parcel, isSelected: true}` 사본을 저장하는 순간 참조가 끊겨
+ * 중복 검사가 매번 실패했다 — 클릭할 때마다 700에 행이 쌓였다.
+ * `rowUid`는 파싱 시점에 부여되어 사본에도 따라가므로 그 구멍이 없다.
  */
 function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
   const key = matchKey(target);
-  if (key === null) return (p) => p === target;
+  if (key === null) return (p) => p.rowUid === target.rowUid;
   return (p) => matchKey(p) === key;
 }
 
@@ -641,11 +647,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       if (!state.result) return state;
       // 이미 들어 있으면 아무 것도 하지 않는다 — `removeParcel`과 대칭이다.
       //
-      // **주의**: 이 검사는 `{...parcel, isSelected: true}` 사본을 저장하기 전에
-      // 원본으로 판정한다. 키가 있는 필지는 사본도 같은 키를 가지므로 정확하지만,
-      // **식별 불가능한 필지는 참조가 끊겨 매번 새로 담긴다.**
-      // 그래서 `ResultTable`이 그런 필지의 선택 자체를 막는다 —
-      // 지오코딩도 안 되고 현장 지시서로도 쓸 수 없는 필지라 그 편이 옳다.
+      // 사본(`{...parcel, isSelected: true}`)을 저장해도 `rowUid`가 따라가므로
+      // 식별 불가능한 필지에도 정확히 동작한다. 예전에는 참조로 판정해
+      // 사본이 만들어지는 순간 검사가 무력해졌다.
       if (state.result.selectedParcels.some(sameParcelPredicate(parcel))) return state;
       return {
         result: {

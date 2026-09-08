@@ -47,16 +47,17 @@ export function ResultTable({
   }, [selectedParcels]);
 
   /**
-   * 식별 불가능한(키가 `null`) 선정 필지의 참조 집합.
+   * 식별 불가능한(키가 `null`) 선정 필지의 **행 식별자** 집합.
    *
-   * `ReviewPage.tableParcels`는 `[...selectedParcels, ...unselected]`이므로 선정분 행의
-   * `row.original`은 스토어에 담긴 **바로 그 객체**다. 참조가 살아 있어 판정할 수 있다.
-   *
-   * (`addParcel`로 사용자가 새로 넣는 경로는 사본을 만들어 참조가 끊긴다. 그래서
-   * 아래에서 **추가만** 막는다 — 제거는 막지 않는다.)
+   * 예전에는 참조 집합이었는데, `addParcel`이 사본을 저장하면 참조가 끊겨
+   * 그 필지의 선택 표시가 켜지지 않았다. `rowUid`는 파싱 시점에 부여되어
+   * 사본에도 따라가므로 그 구멍이 없다.
    */
-  const selectedRefs = useMemo(
-    () => new Set(selectedParcels.filter((p) => parcelMatchKey(p) === null)),
+  const selectedRowUids = useMemo(
+    () =>
+      new Set(
+        selectedParcels.filter((p) => parcelMatchKey(p) === null).map((p) => p.rowUid),
+      ),
     [selectedParcels],
   );
 
@@ -67,9 +68,9 @@ export function ResultTable({
         header: () => <span className="text-xs text-gray-500">선택</span>,
         cell: ({ row }) => {
           const parcel = row.original;
-          // 키가 없으면 참조로 판정한다 — 선정분은 스토어의 객체가 그대로 넘어온다.
           const key = parcelMatchKey(parcel);
-          const isSelected = key !== null ? selectedSet.has(key) : selectedRefs.has(parcel);
+          const isSelected =
+            key !== null ? selectedSet.has(key) : selectedRowUids.has(parcel.rowUid);
           const isRep = isRepresentative(parcel);
 
           if (isRep) {
@@ -77,32 +78,6 @@ export function ResultTable({
               <span className="w-5 h-5 rounded border flex items-center justify-center bg-emerald-500 border-emerald-500 text-white cursor-not-allowed" title="대표필지 (고정)">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </span>
-            );
-          }
-
-          // PNU도 주소도 지번도 없는 필지는 **선택할 수 없다.**
-          //
-          // 식별 불가능한 필지는 **추가만** 막는다.
-          //
-          // 추가: `addParcel`이 `{...parcel, isSelected: true}` 사본을 저장하므로 참조가
-          // 끊기고, 키가 없으면 그 사본을 다시 찾을 방법이 없다. 클릭할 때마다 중복이
-          // 쌓이고 UI로는 뺄 수 없다. 애초에 이런 필지는 지오코딩도 안 되고 현장
-          // 지시서로도 쓸 수 없으니, 원본을 고쳐 오도록 안내한다.
-          //
-          // 제거: **막으면 안 된다.** 추출 알고리즘은 이런 필지를 700에 넣는다
-          // (적격 판정이 PNU·주소 없이도 통과하고, 대체 보충도 키 없는 후보를 담는다).
-          // 그것을 사람이 뺄 수 없으면 잘못 들어간 필지가 그대로 제출 파일에 나간다.
-          // 선정분 행은 스토어의 객체가 그대로 넘어와 참조로 정확히 지울 수 있다.
-          if (key === null && !isSelected) {
-            return (
-              <span
-                className="w-5 h-5 rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-400 cursor-not-allowed"
-                title="PNU·주소·필지번호가 모두 비어 있어 이 필지를 식별할 수 없습니다. 원본 파일을 확인하세요."
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 12H6" />
                 </svg>
               </span>
             );
@@ -226,7 +201,7 @@ export function ResultTable({
         size: 100,
       },
     ],
-    [selectedSet, selectedRefs, onAddParcel, onRemoveParcel]
+    [selectedSet, selectedRowUids, onAddParcel, onRemoveParcel]
   );
 
   const table = useReactTable({
@@ -333,7 +308,8 @@ export function ResultTable({
               if (!row) return null;
               const parcel = row.original;
               const key = parcelMatchKey(parcel);
-              const isSelected = key !== null ? selectedSet.has(key) : selectedRefs.has(parcel);
+              const isSelected =
+                key !== null ? selectedSet.has(key) : selectedRowUids.has(parcel.rowUid);
               const isRep = isRepresentative(parcel);
 
               return (

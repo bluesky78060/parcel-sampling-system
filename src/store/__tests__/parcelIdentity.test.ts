@@ -212,24 +212,88 @@ describe('addParcel — 중복 추가가 쌓이지 않는다', () => {
   });
 
   /**
-   * **멱등화의 한계를 명시한다.**
+   * PROJ1-1-38 이전에는 여기가 뚫려 있었다. `addParcel`이
+   * `{...parcel, isSelected: true}` 사본을 저장하는 순간 참조가 끊겨,
+   * 키 없는 필지는 클릭할 때마다 700에 행이 쌓이고 UI로는 뺄 수 없었다.
    *
-   * `addParcel`은 `{...parcel, isSelected: true}` 사본을 저장하므로, 키가 없는 필지는
-   * 참조가 끊겨 중복 검사가 실패한다. 그래서 `ResultTable`이 그런 필지의 선택 자체를
-   * 막는다 — 지오코딩도 안 되고 현장 지시서로도 쓸 수 없는 필지라 그 편이 옳다.
-   *
-   * 이 테스트는 그 한계가 **의도된 것**임을 기록한다. UI가 막지 않게 되면
-   * 여기서부터 다시 새야 하므로, 그때 이 테스트가 먼저 눈에 띈다.
+   * `rowUid`는 파싱 시점에 부여되어 **사본에도 따라가므로** 그 구멍이 없다.
    */
-  it('[의도된 한계] 식별 불가능한 필지는 사본 때문에 중복 검사가 안 된다', () => {
+  it('식별 불가능한 필지도 사본을 넘어 중복이 막힌다', () => {
     const p = makeParcel({ pnu: '', address: '', parcelId: '' });
     useExtractionStore.setState({ result: makeResult([]) });
 
     useExtractionStore.getState().addParcel(p);
     useExtractionStore.getState().addParcel(p);
+    useExtractionStore.getState().addParcel(p);
 
-    // 막히지 않는다 — 그래서 UI에서 아예 선택할 수 없게 했다
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(1);
+  });
+
+  it('식별 불가능한 서로 다른 필지는 각각 들어간다', () => {
+    const a = makeParcel({ pnu: '', address: '', parcelId: '' });
+    const b = makeParcel({ pnu: '', address: '', parcelId: '' });
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(a);
+    useExtractionStore.getState().addParcel(b);
+
     expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(2);
+  });
+
+  /**
+   * 넣은 것을 원본으로 뺄 수 있어야 한다. 예전에는 스토어에 사본이 담겨
+   * 원본으로는 참조가 안 맞아 지울 수 없었다.
+   */
+  it('식별 불가능한 필지를 원본으로 뺄 수 있다', () => {
+    const p = makeParcel({ pnu: '', address: '', parcelId: '' });
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(p);
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(1);
+
+    useExtractionStore.getState().removeParcel(p);
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(0);
+  });
+});
+
+/**
+ * `rowUid`가 이 구조의 전제다. 파싱 시점에 부여되고 사본에 따라가야
+ * 행 조작이 성립한다.
+ */
+describe('rowUid', () => {
+  it('행마다 다르다', () => {
+    const a = makeParcel({ pnu: 'PNU_A' });
+    const b = makeParcel({ pnu: 'PNU_A' }); // 같은 필지여도 다른 행
+    expect(a.rowUid).not.toBe(b.rowUid);
+    expect(a.rowUid).toBeTruthy();
+  });
+
+  it('사본에 그대로 따라간다', () => {
+    const p = makeParcel({ pnu: 'PNU_A' });
+    const copy = { ...p, isSelected: true, parcelCategory: 'representative' as const };
+    expect(copy.rowUid).toBe(p.rowUid);
+  });
+
+  /**
+   * 스토어가 저장하는 것은 사본이다. 그래도 같은 행으로 판정되어야
+   * 넣고 빼는 것이 성립한다.
+   */
+  it('스토어에 담긴 사본도 같은 행으로 판정된다', () => {
+    const p = makeParcel({ pnu: '', address: '', parcelId: '' });
+    useExtractionStore.setState({
+      result: {
+        selectedParcels: [],
+        riStats: [],
+        farmerStats: [],
+        validation: { isValid: true, warnings: [], errors: [] },
+      },
+    });
+
+    useExtractionStore.getState().addParcel(p);
+    const stored = useExtractionStore.getState().result!.selectedParcels[0];
+
+    expect(stored).not.toBe(p); // 사본이다
+    expect(stored.rowUid).toBe(p.rowUid); // 그러나 같은 행이다
   });
 });
 
@@ -256,5 +320,58 @@ describe('countUniqueParcels — 정책이 갈린다', () => {
 
   it('countUniqueSelected는 결과 집계 정책을 쓴다', () => {
     expect(countUniqueSelected([unidentified(), unidentified()])).toBe(2);
+  });
+});
+
+/**
+ * PROJ1-1-37이 고친 `allUsedKeys`의 `Set<string | null>` 문제.
+ *
+ * `new Set([null, 'a']).has(null)`은 `true`다. 그래서 식별 불가능한 필지가 **하나만**
+ * 이미 선택돼 있어도, 마스터의 다른 식별 불가능 필지가 **전부** "이미 선택됨"으로
+ * 판정돼 대체 후보에서 빠졌다. 타입 검사는 이것을 잡지 못한다 — 완전히 합법이다.
+ *
+ * 리뷰가 실측한 바로는 이 필터를 되돌려도 237건이 전부 통과했다.
+ * **이번 작업의 가장 큰 산출물 영향 수정이 무보호였다.**
+ */
+describe('대체 보충 — 식별 불가능한 후보가 서로를 밀어내지 않는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({ result: null, config: { ...useExtractionStore.getState().config } });
+  });
+
+  it('이미 선정된 키 없는 필지가 나머지 후보를 밀어내지 않는다', () => {
+    // 마스터: 식별 불가능한 적격 필지 3건.
+    // 공익 추출로 1건이 뽑혀 `taggedPublic`에 들어가면, 그 필지의 키가 `null`이라
+    // `allUsedKeys`에 `null`이 담긴다. 그러면 `has(null) === true`가 되어
+    // **나머지 2건이 전부 대체 후보에서 빠진다.**
+    const unidentified = Array.from({ length: 3 }, () =>
+      makeParcel({ pnu: '', address: '', parcelId: '', ri: 'A리', area: 1000 }),
+    );
+    // 부적격 대표필지 → 대체 보충 경로를 연다
+    const badRep = makeParcel({ pnu: 'REP_BAD', ri: 'A리', isEligible: false, area: 1000 });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 2,
+        publicPaymentTarget: 1, // 키 없는 필지 1건이 선정돼 allUsedKeys에 null이 들어간다
+        perRiTarget: 1,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+
+    useExtractionStore.getState().runExtraction(unidentified, [badRep]);
+
+    const result = useExtractionStore.getState().result;
+    expect(result).not.toBeNull();
+
+    // 부적격 대표필지 1건을 대체해야 한다. null이 Set에 들어가면 후보가 0건이 되어
+    // 하나도 못 채운다.
+    const supplemented = result!.selectedParcels.filter(
+      (p) => p.parcelCategory === 'representative',
+    );
+    expect(supplemented).toHaveLength(1);
   });
 });

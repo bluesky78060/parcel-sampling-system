@@ -11,7 +11,7 @@ import type { Parcel } from '../types';
  * - Set 구축: 넣지 않는다
  * - Set 조회: `false`로 본다
  * - dedupe: **접지 않고 각각 남긴다** — 빈 키끼리 같은 필지로 볼 근거가 없다
- * - 삭제: 참조로 비교한다 — 키가 없으면 그것만이 안전하다
+ * - 삭제·선택: 키가 없으면 `rowUid`(행 식별자)로 비교한다 — 참조는 사본에서 끊긴다
  */
 export function parcelMatchKey(p: Parcel): string | null {
   if (p.pnu) return p.pnu;
@@ -106,4 +106,20 @@ export function countUniqueParcels(
     else keys.add(key);
   }
   return keys.size + (unidentified === 'each' ? unidentifiedCount : 0);
+}
+
+/**
+ * 행 식별자를 만든다.
+ *
+ * `crypto.randomUUID()`는 **보안 컨텍스트(HTTPS·localhost)에서만** 있다.
+ * 이 앱은 GitHub Pages(HTTPS)와 dev 서버(localhost)에서만 도므로 정상 경로에서는
+ * 항상 쓸 수 있지만, 없을 때 조용히 터지면 파싱 전체가 멈추므로 폴백을 둔다.
+ *
+ * 폴백의 충돌 확률은 한 파일(4만 행) 안에서 무시할 수준이고, 이 값은 세션 안에서만
+ * 쓰이므로 전역 유일성도 필요 없다.
+ */
+export function newRowUid(): string {
+  const c = globalThis.crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return `r-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 11)}`;
 }
