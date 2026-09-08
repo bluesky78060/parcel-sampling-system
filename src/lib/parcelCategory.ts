@@ -33,3 +33,20 @@ export function categoryLabel(p: Parcel): string {
   if (cat === 'both') return '공익직불제·대표필지';
   return cat === 'representative' ? '대표필지' : '공익직불제';
 }
+
+/**
+ * 대표필지로 확정된 필지의 분류.
+ *
+ * **경영체번호가 있으면 공익직불제와 혼용된다** — 그 필지는 공익직불제 대상이기도
+ * 하므로 양쪽 시트에 모두 실려야 한다. 번호가 없으면 공익직불제 대상이 아니므로
+ * 대표필지 시트에만 남는다.
+ *
+ * 예전에는 `parcelCategory: 'representative'`로 **무조건 덮어썼다.** 그러면
+ * `isPublicPayment`가 false가 되어 공익직불제 시트(`{연도}_필지선정`)에서 사라지고,
+ * **담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.** 공익 추출에도 뽑힌
+ * 대표필지(`taggedPublic`)에는 이 위험이 이미 주석으로 적혀 있었는데,
+ * 안 뽑힌 쪽(`repDirect`)과 대체 보충분(`repSupplements`)에만 빠져 있었다.
+ */
+export function representativeCategoryOf(p: Parcel): ParcelCategory {
+  return p.farmerId ? 'both' : 'representative';
+}

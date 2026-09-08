@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import type { ExtractionConfig, ExtractionResult, Parcel, SpatialConfig, ValidationResult } from '../types';
 import { extractParcels, getParcelArea, validateExtraction, generateRiStats, generateFarmerStats, MIN_AREA } from '../lib/extractionAlgorithm';
 import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
-import { isRepresentative, markAsRepresentative } from '../lib/parcelCategory';
+import { isRepresentative, markAsRepresentative, representativeCategoryOf } from '../lib/parcelCategory';
 import { parcelMatchKey, parcelFarmerKey, countUniqueParcels, keySetOf } from '../lib/parcelKey';
 
 /**
@@ -426,9 +426,11 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         );
       });
 
+      // 경영체번호가 있으면 공익직불제와 혼용된다 — 'both'라야 양쪽 시트에 실린다.
+      // 무조건 'representative'로 덮어쓰면 공익직불제 시트에서 사라진다.
       const repDirect = repNotInPublic.map(p => ({
         ...p,
-        parcelCategory: 'representative' as const,
+        parcelCategory: representativeCategoryOf(p),
         isSelected: true,
       }));
 
@@ -509,9 +511,11 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           // — 대체 복사 200건이 조용히 100건이 됐고 "대체 부족" 경고도 안 떴다.
           if (isAlreadyUsed(p)) continue;
           markUsed(p);
+          // 대체 보충분은 마스터(공익직불제 모집단)에서 복사해 온 행이다.
+          // 대표필지 자리를 메우는 동시에 공익직불제 대상이기도 하다.
           repSupplements.push({
             ...p,
-            parcelCategory: 'representative' as const,
+            parcelCategory: representativeCategoryOf(p),
             isSelected: true,
           });
         }

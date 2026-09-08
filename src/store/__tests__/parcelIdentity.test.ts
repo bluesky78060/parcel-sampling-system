@@ -5,7 +5,7 @@ import {
   useExtractionStore,
 } from '../extractionStore';
 import { countUniqueParcels } from '../../lib/parcelKey';
-import { isRepresentative } from '../../lib/parcelCategory';
+import { isPublicPayment, isRepresentative } from '../../lib/parcelCategory';
 import { makeParcel } from '../../lib/__tests__/factories';
 import type { ExtractionResult, Parcel } from '../../types';
 
@@ -370,9 +370,9 @@ describe('대체 보충 — 식별 불가능한 후보가 서로를 밀어내지
 
     // 부적격 대표필지 1건을 대체해야 한다. null이 Set에 들어가면 후보가 0건이 되어
     // 하나도 못 채운다.
-    const supplemented = result!.selectedParcels.filter(
-      (p) => p.parcelCategory === 'representative',
-    );
+    // `=== 'representative'`로 비교하면 안 된다 — 경영체번호가 있는 대표필지는
+    // `'both'`(공익직불제 혼용)라 놓친다. 판정은 헬퍼를 거친다.
+    const supplemented = result!.selectedParcels.filter(isRepresentative);
     expect(supplemented).toHaveLength(1);
   });
 });
@@ -656,5 +656,109 @@ describe('무보호였던 가드', () => {
       (m) => m.code === 'FARMER_OVER_LIMIT',
     );
     expect(overLimit.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * PROJ1-1-41. 사용자 보고: "경영체번호가 있는 필지는 공익직불제와 혼용이 가능한데
+ * 대표필지로만 되어 있네."
+ *
+ * `repDirect`·`repSupplements`를 `'representative'`로 **무조건 덮어쓰면**
+ * `isPublicPayment`가 false가 되어 공익직불제 시트에서 사라진다 —
+ * **담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.**
+ * 같은 위험이 `taggedPublic`에는 이미 주석으로 적혀 있었는데 여기만 빠져 있었다.
+ */
+describe('대표필지와 공익직불제의 혼용', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  const config = {
+    totalTarget: 10,
+    publicPaymentTarget: 10,
+    perRiTarget: 5,
+    maxPerFarmer: 10,
+    randomSeed: 42,
+    enableLandCategoryFilter: false,
+    underfillPolicy: 'skip' as const,
+  };
+
+  const runWith = (master: Parcel[], reps: Parcel[]) => {
+    useExtractionStore.setState({
+      config: { ...useExtractionStore.getState().config, ...config },
+    });
+    useExtractionStore.getState().runExtraction(master, reps);
+    return useExtractionStore.getState().result!.selectedParcels;
+  };
+
+  it('경영체번호가 있는 적격 대표필지는 양쪽 시트에 실린다', () => {
+    const master = makeParcel({ farmerId: 'F_M', pnu: 'PNU_M', ri: 'A리', area: 1000 });
+    // 공익 추출에 안 뽑히는 별개 대표필지 (repDirect 경로)
+    const rep = makeParcel({ farmerId: 'F_R', pnu: 'PNU_R', ri: 'A리', area: 1000 });
+
+    const rows = runWith([master], [rep]);
+    const repRow = rows.find((p) => p.pnu === 'PNU_R')!;
+    expect(repRow).toBeDefined();
+    expect(repRow.parcelCategory).toBe('both');
+    expect(isRepresentative(repRow)).toBe(true);
+    expect(isPublicPayment(repRow)).toBe(true); // ← 공익직불제 시트에 실린다
+  });
+
+  it('경영체번호가 없는 대표필지는 대표필지 시트에만 남는다', () => {
+    const master = makeParcel({ farmerId: 'F_M', pnu: 'PNU_M', ri: 'A리', area: 1000 });
+    const rep = makeParcel({ farmerId: '', pnu: 'PNU_R', ri: 'A리', area: 1000 });
+
+    const rows = runWith([master], [rep]);
+    const repRow = rows.find((p) => p.pnu === 'PNU_R')!;
+    expect(repRow.parcelCategory).toBe('representative');
+    expect(isPublicPayment(repRow)).toBe(false); // ← 공익직불제 대상이 아니다
+  });
+
+  it('대체 보충분도 경영체번호가 있으면 혼용이다', () => {
+    const master = [
+      makeParcel({ farmerId: 'F_A', pnu: 'PNU_A', ri: 'A리', area: 1000 }),
+      makeParcel({ farmerId: 'F_B', pnu: 'PNU_B', ri: 'A리', area: 1000 }),
+    ];
+    const badRep = makeParcel({
+      farmerId: 'F_X',
+      pnu: 'REP_BAD',
+      ri: 'A리',
+      isEligible: false,
+      area: 1000,
+    });
+
+    // 공익 목표를 1로 줄여 마스터 한 건을 대체 후보로 남긴다.
+    // 목표가 크면 마스터가 전부 공익에 뽑혀 보충할 후보가 없다.
+    useExtractionStore.setState({
+      config: { ...useExtractionStore.getState().config, ...config, publicPaymentTarget: 1, perRiTarget: 1 },
+    });
+    useExtractionStore.getState().runExtraction(master, [badRep]);
+    const rows = useExtractionStore.getState().result!.selectedParcels;
+    const supplements = rows.filter(isRepresentative);
+    expect(supplements.length).toBeGreaterThan(0);
+    for (const s of supplements) {
+      expect(s.parcelCategory).toBe('both');
+      expect(isPublicPayment(s)).toBe(true);
+    }
+  });
+
+  /**
+   * **행 수 대조.** 분류만 바뀌는 것이므로 총 선정 건수와 대표필지 시트 행 수는
+   * 그대로여야 하고, 공익직불제 시트만 늘어야 한다.
+   */
+  it('총 건수와 대표필지 시트는 그대로이고 공익직불제 시트만 늘어난다', () => {
+    const master = makeParcel({ farmerId: 'F_M', pnu: 'PNU_M', ri: 'A리', area: 1000 });
+    const repWithId = makeParcel({ farmerId: 'F_R', pnu: 'PNU_R', ri: 'A리', area: 1000 });
+    const repNoId = makeParcel({ farmerId: '', pnu: 'PNU_N', ri: 'A리', area: 1000 });
+
+    const rows = runWith([master], [repWithId, repNoId]);
+    expect(rows).toHaveLength(3); // 행이 늘지 않는다
+    // 대표필지 시트: 두 대표필지 모두
+    expect(rows.filter(isRepresentative)).toHaveLength(2);
+    // 공익직불제 시트: 마스터 + 번호 있는 대표필지 (번호 없는 것은 빠진다)
+    expect(rows.filter(isPublicPayment)).toHaveLength(2);
   });
 });
