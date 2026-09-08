@@ -35,7 +35,12 @@ export function KakaoMap({
 
   // Memoize selectedKeys so it only recalculates when selectedParcels changes
   const selectedKeys = useMemo(
-    () => new Set(selectedParcels.map((p) => parcelKey(p))),
+    // 식별 불가능한 필지는 키를 만들 수 없다. 넣으면 그런 필지가 서로 "선택됨"으로
+    // 오인되므로 제외한다 — 조회하는 쪽도 null이면 false로 본다.
+    () =>
+      new Set(
+        selectedParcels.map((p) => parcelKey(p)).filter((k): k is string => k !== null),
+      ),
     [selectedParcels],
   );
 

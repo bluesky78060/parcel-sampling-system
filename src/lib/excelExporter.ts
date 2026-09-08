@@ -158,7 +158,7 @@ function createSelectedSheet(parcels: Parcel[], duplicateKeys: Set<string> = new
     // 파일 대조 키(duplicateKeys)는 대표필지 파일에 PNU가 없고 주소 표기가 다르면
     // 비어 버린다. 결과가 이미 아는 사실('both' = 양쪽 시트에 실림)을 먼저 쓴다.
     const inBothSheets = isRepresentative(p) && isPublicPayment(p);
-    const isDup = inBothSheets || duplicateKeys.has(key) ? 'O' : '';
+    const isDup = inBothSheets || (key !== null && duplicateKeys.has(key)) ? 'O' : '';
     return [
       isDup,                                                                       // 중복여부
       p.farmerId,                                                                  // 직불신청_경영체번호

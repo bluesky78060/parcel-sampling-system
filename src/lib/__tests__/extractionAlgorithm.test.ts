@@ -208,7 +208,10 @@ describe('extractParcels — 결과 불변식', () => {
       parcels,
       makeConfig({ totalTarget: 30, publicPaymentTarget: 30 }),
     );
-    const keys = result.selectedParcels.map((p) => `${p.farmerId}__${p.parcelId}`);
+    // 정규 키로 판정한다. 예전에는 여기서 `farmerId__parcelId`를 조립했는데,
+    // 그 공식은 경영체번호가 비면 리를 넘어 충돌해 **알고리즘이 옳게 동작해도
+    // 단언 단계에서 오탐**이 났다(PROJ1-1-37).
+    const keys = result.selectedParcels.map(parcelMatchKey);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
@@ -217,9 +220,9 @@ describe('extractParcels — 결과 불변식', () => {
       parcels,
       makeConfig({ totalTarget: 30, publicPaymentTarget: 30 }),
     );
-    const inputKeys = new Set(parcels.map((p) => `${p.farmerId}__${p.parcelId}`));
+    const inputKeys = new Set(parcels.map(parcelMatchKey));
     for (const p of result.selectedParcels) {
-      expect(inputKeys.has(`${p.farmerId}__${p.parcelId}`)).toBe(true);
+      expect(inputKeys.has(parcelMatchKey(p))).toBe(true);
     }
   });
 
@@ -556,7 +559,7 @@ describe('validateExtraction', () => {
       makeParcel({ farmerId: 'F1', parcelId: '2' }),
       makeParcel({ farmerId: 'F1', parcelId: '3' }),
     ];
-    const exempt = new Set([parcelMatchKey(over[2])]);
+    const exempt = new Set([parcelMatchKey(over[2])!]);
     const v = validateExtraction(over, config, riStatsFor(over), {
       exemptFarmerLimitKeys: exempt,
     });

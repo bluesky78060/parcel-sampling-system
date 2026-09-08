@@ -3,7 +3,7 @@ import type { ExtractionConfig, ExtractionResult, Parcel, SpatialConfig, Validat
 import { extractParcels, getParcelArea, validateExtraction, generateRiStats, generateFarmerStats, MIN_AREA } from '../lib/extractionAlgorithm';
 import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { isRepresentative, markAsRepresentative } from '../lib/parcelCategory';
-import { parcelMatchKey, parcelFarmerKey } from '../lib/parcelKey';
+import { parcelMatchKey, parcelFarmerKey, countUniqueParcels } from '../lib/parcelKey';
 
 /**
  * 대표필지를 상한만큼 리별로 고르게 남긴다.
@@ -45,12 +45,35 @@ function limitRepresentativesByRi(reps: Parcel[], limit: number): Parcel[] {
 const matchKey = parcelMatchKey;
 const farmerKey = parcelFarmerKey;
 
+/**
+ * "이 필지와 같은 것인가"를 판정하는 술어.
+ *
+ * 예전에는 `p.farmerId === farmerId && p.parcelId === parcelId`로 비교했다.
+ * 지번은 리를 넘어 고유하지 않고 경영체번호는 빌 수 있으므로,
+ * **검토 화면에서 문단리의 농가 미상 지번 100을 한 건 빼면 내성리의 것도 함께
+ * 700건에서 사라졌다.** 화면에는 아무 표시도 없었다.
+ *
+ * 정규 키로 비교하되, 키가 없는(식별 불가능한) 필지는 **참조로만** 판정한다 —
+ * 그것이 유일하게 안전하다.
+ */
+export function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
+  const key = matchKey(target);
+  if (key === null) return (p) => p === target;
+  return (p) => matchKey(p) === key;
+}
+
 /** 결과 배열에서 겹치는 필지를 1건으로 접은 배열 (공익직불제 행을 우선 보존) */
 export function dedupeSelected(parcels: Parcel[]): Parcel[] {
   const seen = new Set<string>();
   const result: Parcel[] = [];
   for (const p of parcels) {
     const key = matchKey(p);
+    // 식별 불가능한 필지(PNU·주소·지번이 모두 빈 행)는 접지 않고 각각 남긴다.
+    // 빈 키끼리 같은 필지로 볼 근거가 없다 — 접으면 결과에서 조용히 사라진다.
+    if (key === null) {
+      result.push(p);
+      continue;
+    }
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(p);
@@ -60,7 +83,9 @@ export function dedupeSelected(parcels: Parcel[]): Parcel[] {
 
 /** 결과 배열의 고유 필지 수 (공익직불제 ↔ 대표필지 겹침을 1건으로 계산) */
 export function countUniqueSelected(parcels: Parcel[]): number {
-  return new Set(parcels.map(matchKey)).size;
+  // 결과 집계다 — 이 행들은 실제로 엑셀에 나가므로 식별 불가능해도 각각 1건이다.
+  // (달성 가능성 판정은 반대로 'exclude'를 쓴다 — `parcelStore.canMeetTarget`)
+  return countUniqueParcels(parcels, 'each');
 }
 
 const DEFAULT_CONFIG: ExtractionConfig = {
@@ -101,9 +126,9 @@ interface ExtractionStore {
   toggleLandCategoryFilter: (enabled: boolean) => void;
 
   runExtraction: (allParcels: Parcel[], representativeParcels?: Parcel[]) => void;
-  toggleParcelSelection: (farmerId: string, parcelId: string) => void;
+  toggleParcelSelection: (parcel: Parcel) => void;
   addParcel: (parcel: Parcel) => void;
-  removeParcel: (farmerId: string, parcelId: string) => void;
+  removeParcel: (parcel: Parcel) => void;
 
   getValidation: () => ValidationResult | null;
   reset: () => void;
@@ -219,7 +244,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       const masterByKey = new Map<string, Parcel>();
       const masterByFarmerKey = new Map<string, Parcel>();
       for (const p of allParcels) {
-        masterByKey.set(matchKey(p), p);
+        const mk = matchKey(p);
+        if (mk) masterByKey.set(mk, p);
         const fk = farmerKey(p);
         if (fk) masterByFarmerKey.set(fk, p);
       }
@@ -235,7 +261,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         // 같은 필지를 가리키는 마스터 행. 경영체번호+지번 폴백에서도 리를 본다 —
         // 안 보면 farmerKey에 ri를 넣은 보호가 여기서 우회된다: 다른 리의 같은 지번이
         // 매칭되고 그 PNU가 대표필지 행에 기입되어 제출 파일로 나간다.
-        const sameParcel = masterByKey.get(matchKey(rep))
+        const repMk = matchKey(rep);
+        const sameParcel = (repMk ? masterByKey.get(repMk) : undefined)
           // 경영체번호가 없으면 PNU/주소 매칭만 쓴다 — 빈 값 폴백은 오매칭을 부른다
           || (repFk ? masterByFarmerKey.get(repFk) : undefined)
           || (rep.farmerId
@@ -328,7 +355,8 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 대표필지 매칭 키 셋 (추출 알고리즘에서 우선 선택용)
       const repParcelKeys = new Set<string>();
       for (const p of repLimited) {
-        repParcelKeys.add(matchKey(p));
+        const mk = matchKey(p);
+        if (mk) repParcelKeys.add(mk);
         const fk = farmerKey(p);
         if (fk) repParcelKeys.add(fk);
       }
@@ -363,7 +391,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       // 'both'는 두 성격을 동시에 가지므로 양쪽 시트에 모두 실린다.
       const taggedPublic = result.selectedParcels.map(p => {
         const fk = farmerKey(p);
-        const isRep = repParcelKeys.has(matchKey(p)) || (fk !== null && repParcelKeys.has(fk));
+        const mk = matchKey(p);
+        const isRep =
+          (mk !== null && repParcelKeys.has(mk)) || (fk !== null && repParcelKeys.has(fk));
         return isRep ? { ...p, parcelCategory: markAsRepresentative(p.parcelCategory) } : p;
       });
       const repInPublicCount = taggedPublic.filter(isRepresentative).length;
@@ -390,10 +420,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       if (excludedRepReasons.length > 0) {
         // 이미 선택된 키 모음
-        const allUsedKeys = new Set([
-          ...taggedPublic.map(matchKey),
-          ...repDirect.map(matchKey),
-        ]);
+        // `Set<string | null>`로 두면 `has(null)`이 true가 되어, 식별 불가능한 필지가
+        // 하나만 들어가도 마스터의 다른 식별 불가능 필지가 **전부** "이미 선택됨"으로
+        // 판정돼 대체 후보에서 빠진다. 타입 검사는 이것을 잡지 못한다.
+        const allUsedKeys = new Set(
+          [...taggedPublic, ...repDirect]
+            .map(matchKey)
+            .filter((k): k is string => k !== null),
+        );
 
         // 마스터에서 대체 후보 (적격 + 미선택)
         const masterCandidates = allParcels.filter(p => {
@@ -401,7 +435,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           if (config.excludedRis.includes(p.ri)) return false;
           const area = getParcelArea(p);
           if (area !== null && area < MIN_AREA) return false;
-          return !allUsedKeys.has(matchKey(p));
+          // 키가 없는 후보는 "이미 쓰였는지" 알 수 없다 — 배제하지 않는다
+          const pk = matchKey(p);
+          return pk === null || !allUsedKeys.has(pk);
         });
 
         // 대표필지 중심 근처 우선 정렬
@@ -437,8 +473,12 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           // 루프 전에 만든 집합만 보면 그 쌍이 둘 다 담기고 뒤의 dedupe가 하나로 접는다
           // — 대체 복사 200건이 조용히 100건이 됐고 "대체 부족" 경고도 안 떴다.
           const k = matchKey(p);
-          if (allUsedKeys.has(k)) continue;
-          allUsedKeys.add(k);
+          // 키가 없으면 "이미 담았는지" 알 수 없다. 후보에서 배제하지 않았으므로
+          // 여기서도 담되, 집합에는 넣지 않는다(넣으면 null 하나가 나머지를 다 막는다).
+          if (k !== null) {
+            if (allUsedKeys.has(k)) continue;
+            allUsedKeys.add(k);
+          }
           repSupplements.push({
             ...p,
             parcelCategory: 'representative' as const,
@@ -548,7 +588,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       //  - taggedPublic   : 사용자 지정이지만 **슬라이스를 이미 거쳐** 뽑힌 것
       //  - repSupplements : 알고리즘이 고른 대체분, 사용자 지정이 아님
       // 뒤 둘까지 면제하면 한 농가에 몰려도 경고가 안 뜬다.
-      const exemptKeys = new Set(repDirect.map(matchKey));
+      const exemptKeys = new Set(
+        repDirect.map(matchKey).filter((k): k is string => k !== null),
+      );
 
       const validation = validateExtraction(finalParcels, config, mergedRiStats, {
         totalTarget: effectiveTotal,
@@ -581,18 +623,13 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
     }
   },
 
-  toggleParcelSelection: (farmerId, parcelId) =>
+  toggleParcelSelection: (target) =>
     set((state) => {
       if (!state.result) return state;
       const selected = state.result.selectedParcels;
-      const exists = selected.some(
-        (p) => p.farmerId === farmerId && p.parcelId === parcelId
-      );
-      const newSelected = exists
-        ? selected.filter(
-            (p) => !(p.farmerId === farmerId && p.parcelId === parcelId)
-          )
-        : selected;
+      const matches = sameParcelPredicate(target);
+      const exists = selected.some(matches);
+      const newSelected = exists ? selected.filter((p) => !matches(p)) : selected;
 
       return {
         result: { ...state.result, selectedParcels: newSelected },
@@ -602,6 +639,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
   addParcel: (parcel) =>
     set((state) => {
       if (!state.result) return state;
+      // 이미 들어 있으면 아무 것도 하지 않는다 — `removeParcel`과 대칭이다.
+      //
+      // **주의**: 이 검사는 `{...parcel, isSelected: true}` 사본을 저장하기 전에
+      // 원본으로 판정한다. 키가 있는 필지는 사본도 같은 키를 가지므로 정확하지만,
+      // **식별 불가능한 필지는 참조가 끊겨 매번 새로 담긴다.**
+      // 그래서 `ResultTable`이 그런 필지의 선택 자체를 막는다 —
+      // 지오코딩도 안 되고 현장 지시서로도 쓸 수 없는 필지라 그 편이 옳다.
+      if (state.result.selectedParcels.some(sameParcelPredicate(parcel))) return state;
       return {
         result: {
           ...state.result,
@@ -613,15 +658,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       };
     }),
 
-  removeParcel: (farmerId, parcelId) =>
+  removeParcel: (target) =>
     set((state) => {
       if (!state.result) return state;
+      const matches = sameParcelPredicate(target);
       return {
         result: {
           ...state.result,
-          selectedParcels: state.result.selectedParcels.filter(
-            (p) => !(p.farmerId === farmerId && p.parcelId === parcelId)
-          ),
+          selectedParcels: state.result.selectedParcels.filter((p) => !matches(p)),
         },
       };
     }),
