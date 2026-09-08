@@ -5,6 +5,7 @@ import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
 import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 import { applyColumnMapping } from '../lib/excelParser';
+import { applyGeocodedCoords } from '../lib/geocodeApply';
 import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { useGeocoding } from '../hooks/useGeocoding';
@@ -223,27 +224,13 @@ export function AnalyzePage() {
 
       const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
 
-      const geocodedMap = new Map<string, Parcel>();
-      for (const gp of geocodedParcels) {
-        const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
-        geocodedMap.set(key, gp);
-      }
-
       // 공익직불제 필지 좌표 업데이트
-      const updatedParcels = parcelStore.allParcels.map((p) => {
-        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-        const geocoded = geocodedMap.get(key);
-        return geocoded ? { ...p, coords: geocoded.coords } : p;
-      });
+      const updatedParcels = applyGeocodedCoords(parcelStore.allParcels, geocodedParcels);
       parcelStore.updateParcels(updatedParcels);
 
       // 대표필지 좌표 업데이트
       if (repParcels.length > 0) {
-        const updatedRep = repParcels.map((p) => {
-          const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-          const geocoded = geocodedMap.get(key);
-          return geocoded ? { ...p, coords: geocoded.coords } : p;
-        });
+        const updatedRep = applyGeocodedCoords(repParcels, geocodedParcels);
         parcelStore.setRepresentativeParcels(updatedRep);
       }
 
@@ -273,25 +260,11 @@ export function AnalyzePage() {
 
       const geocodedParcels = await geocoding.startGeocoding(allForGeocoding, true);
 
-      const geocodedMap = new Map<string, Parcel>();
-      for (const gp of geocodedParcels) {
-        const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
-        geocodedMap.set(key, gp);
-      }
-
-      const updatedParcels = parcelStore.allParcels.map((p) => {
-        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-        const geocoded = geocodedMap.get(key);
-        return geocoded ? { ...p, coords: geocoded.coords } : p;
-      });
+      const updatedParcels = applyGeocodedCoords(parcelStore.allParcels, geocodedParcels);
       parcelStore.updateParcels(updatedParcels);
 
       if (repParcels.length > 0) {
-        const updatedRep = repParcels.map((p) => {
-          const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-          const geocoded = geocodedMap.get(key);
-          return geocoded ? { ...p, coords: geocoded.coords } : p;
-        });
+        const updatedRep = applyGeocodedCoords(repParcels, geocodedParcels);
         parcelStore.setRepresentativeParcels(updatedRep);
       }
 

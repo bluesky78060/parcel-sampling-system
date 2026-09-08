@@ -9,6 +9,7 @@ import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
+import { applyGeocodedCoords } from '../lib/geocodeApply';
 import {
   buildMapSelectedParcels,
   buildTableParcels,
@@ -57,26 +58,12 @@ export function ReviewPage() {
 
     const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
 
-    const geocodedMap = new Map<string, Parcel>();
-    for (const gp of geocodedParcels) {
-      const key = `${gp.farmerId}_${gp.parcelId}_${gp.address}`;
-      geocodedMap.set(key, gp);
-    }
-
-    const updatedParcels = allParcels.map((p) => {
-      const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-      const geocoded = geocodedMap.get(key);
-      return geocoded ? { ...p, coords: geocoded.coords } : p;
-    });
-    parcelStore.updateParcels(updatedParcels);
+    parcelStore.updateParcels(applyGeocodedCoords(allParcels, geocodedParcels));
 
     if (representativeParcels.length > 0) {
-      const updatedRep = representativeParcels.map((p) => {
-        const key = `${p.farmerId}_${p.parcelId}_${p.address}`;
-        const geocoded = geocodedMap.get(key);
-        return geocoded ? { ...p, coords: geocoded.coords } : p;
-      });
-      parcelStore.setRepresentativeParcels(updatedRep);
+      parcelStore.setRepresentativeParcels(
+        applyGeocodedCoords(representativeParcels, geocodedParcels),
+      );
     }
   }, [allParcels, representativeParcels, geocoding, parcelStore]);
 
