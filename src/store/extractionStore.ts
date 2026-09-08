@@ -381,8 +381,16 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         : { selectedParcels: [], riStats: [], farmerStats: [], validation: { isValid: true, warnings: [], errors: [] } };
 
       // ── 3. 적격 대표필지를 결과에 직접 추가 (공익직불제와 중복되면 태깅만) ──
-      const selectedKeySet = new Set(result.selectedParcels.map(matchKey));
-      const selectedFarmerKeySet = new Set(
+      // ⚠️ `new Set<string>`로 **명시**한다. 생략하면 `Set<string | null>`로 추론되고
+      // `has(null)`이 true가 되어, 공익 추출에 뽑힌 필지 중 키 없는 것이 하나라도 있으면
+      // 무관한 키 없는 적격 대표필지가 전부 "이미 뽑혔다"로 판정돼 결과에서 조용히
+      // 사라진다(PROJ1-1-39). 형제 줄도 `allUsedKeys`도 `exemptKeys`도 거르는데 여기만
+      // 빠져 있었고, **타입 검사가 못 잡았기 때문에** 오래 살아남았다.
+      // 타입을 박아 두면 필터를 지우는 순간 빌드가 깨진다 — 테스트보다 이쪽이 확실하다.
+      const selectedKeySet = new Set<string>(
+        result.selectedParcels.map(matchKey).filter((k): k is string => k !== null)
+      );
+      const selectedFarmerKeySet = new Set<string>(
         result.selectedParcels.map(farmerKey).filter((k): k is string => k !== null)
       );
 
@@ -406,9 +414,17 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       // 공익직불제에 뽑히지 않은 적격 대표필지만 추가한다.
       // 고정 관측점이므로 반드시 포함되어야 하고, 그만큼 신규 추출분이 밀려난다.
+      // 키가 없는 대표필지는 어느 집합에도 걸리지 않아 그대로 추가된다. 그것이 맞다 —
+      // `mergeWithRepresentatives`가 이미 확정한 규칙("키가 없는 대표필지는 새 것으로
+      // 본다")과 같은 경계다. 대표필지는 마스터와 다른 파일에서 파싱되므로 행이 겹치지
+      // 않고, 접으면 고정 관측점이 조용히 사라진다.
       const repNotInPublic = repLimited.filter(p => {
+        const mk = matchKey(p);
         const fk = farmerKey(p);
-        return !selectedKeySet.has(matchKey(p)) && !(fk !== null && selectedFarmerKeySet.has(fk));
+        return (
+          !(mk !== null && selectedKeySet.has(mk)) &&
+          !(fk !== null && selectedFarmerKeySet.has(fk))
+        );
       });
 
       const repDirect = repNotInPublic.map(p => ({
@@ -425,15 +441,33 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       const repSupplements: Parcel[] = [];
 
       if (excludedRepReasons.length > 0) {
-        // 이미 선택된 키 모음
-        // `Set<string | null>`로 두면 `has(null)`이 true가 되어, 식별 불가능한 필지가
-        // 하나만 들어가도 마스터의 다른 식별 불가능 필지가 **전부** "이미 선택됨"으로
-        // 판정돼 대체 후보에서 빠진다. 타입 검사는 이것을 잡지 못한다.
-        const allUsedKeys = new Set(
-          [...taggedPublic, ...repDirect]
-            .map(matchKey)
-            .filter((k): k is string => k !== null),
+        // 이미 선택된 키 모음.
+        // `new Set<string>`를 **명시**한다. 생략하면 `Set<string | null>`로 추론되고
+        // `has(null)`이 true가 되어, 식별 불가능한 필지가 하나만 들어가도 마스터의 다른
+        // 식별 불가능 필지가 **전부** "이미 선택됨"으로 판정돼 대체 후보에서 빠진다
+        // (PROJ1-1-37). 타입을 박으면 필터를 지우는 순간 빌드가 깨진다.
+        const used = [...taggedPublic, ...repDirect];
+        const allUsedKeys = new Set<string>(
+          used.map(matchKey).filter((k): k is string => k !== null),
         );
+        // 키가 없는 행은 위 집합이 못 지킨다. 그대로 두면 **이미 공익에 뽑힌 키 없는
+        // 마스터 행이 대체 보충으로 다시 담겨** 같은 행이 결과에 두 번 실렸다.
+        // `dedupeSelected`는 키 없는 필지를 접지 않고(의도된 규칙) `countUniqueSelected`는
+        // 'each'라, 700 목표가 실제로는 699필지 + 중복 1행으로 채워진다(PROJ1-1-39).
+        const usedRowUids = new Set<string>(used.map(p => p.rowUid));
+
+        // **판정 공식은 여기 하나뿐이다.** 후보 선별과 담는 루프가 각각 자기 식을 갖고
+        // 있으면 서로를 가려, 한쪽을 되돌려도 테스트가 전부 통과한다(실측 확인).
+        // 그러면 다음 사람이 "중복이니 지워도 된다"고 판단할 근거가 생긴다.
+        const isAlreadyUsed = (p: Parcel): boolean => {
+          const k = matchKey(p);
+          return k === null ? usedRowUids.has(p.rowUid) : allUsedKeys.has(k);
+        };
+        const markUsed = (p: Parcel): void => {
+          const k = matchKey(p);
+          if (k !== null) allUsedKeys.add(k);
+          usedRowUids.add(p.rowUid);
+        };
 
         // 마스터에서 대체 후보 (적격 + 미선택)
         const masterCandidates = allParcels.filter(p => {
@@ -441,9 +475,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           if (config.excludedRis.includes(p.ri)) return false;
           const area = getParcelArea(p);
           if (area !== null && area < MIN_AREA) return false;
-          // 키가 없는 후보는 "이미 쓰였는지" 알 수 없다 — 배제하지 않는다
-          const pk = matchKey(p);
-          return pk === null || !allUsedKeys.has(pk);
+          return !isAlreadyUsed(p);
         });
 
         // 대표필지 중심 근처 우선 정렬
@@ -475,16 +507,11 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         }
         for (const p of sorted) {
           if (repSupplements.length >= shortage) break;
-          // 담은 키를 바로 반영한다. 마스터에는 같은 지번이 작물별로 여러 행 있어,
+          // 담은 것을 바로 반영한다. 마스터에는 같은 지번이 작물별로 여러 행 있어,
           // 루프 전에 만든 집합만 보면 그 쌍이 둘 다 담기고 뒤의 dedupe가 하나로 접는다
           // — 대체 복사 200건이 조용히 100건이 됐고 "대체 부족" 경고도 안 떴다.
-          const k = matchKey(p);
-          // 키가 없으면 "이미 담았는지" 알 수 없다. 후보에서 배제하지 않았으므로
-          // 여기서도 담되, 집합에는 넣지 않는다(넣으면 null 하나가 나머지를 다 막는다).
-          if (k !== null) {
-            if (allUsedKeys.has(k)) continue;
-            allUsedKeys.add(k);
-          }
+          if (isAlreadyUsed(p)) continue;
+          markUsed(p);
           repSupplements.push({
             ...p,
             parcelCategory: 'representative' as const,
@@ -594,7 +621,7 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
       //  - taggedPublic   : 사용자 지정이지만 **슬라이스를 이미 거쳐** 뽑힌 것
       //  - repSupplements : 알고리즘이 고른 대체분, 사용자 지정이 아님
       // 뒤 둘까지 면제하면 한 농가에 몰려도 경고가 안 뜬다.
-      const exemptKeys = new Set(
+      const exemptKeys = new Set<string>(
         repDirect.map(matchKey).filter((k): k is string => k !== null),
       );
 

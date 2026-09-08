@@ -5,6 +5,7 @@ import {
   useExtractionStore,
 } from '../extractionStore';
 import { countUniqueParcels } from '../../lib/parcelKey';
+import { isRepresentative } from '../../lib/parcelCategory';
 import { makeParcel } from '../../lib/__tests__/factories';
 import type { ExtractionResult, Parcel } from '../../types';
 
@@ -373,5 +374,183 @@ describe('대체 보충 — 식별 불가능한 후보가 서로를 밀어내지
       (p) => p.parcelCategory === 'representative',
     );
     expect(supplemented).toHaveLength(1);
+  });
+});
+
+/**
+ * PROJ1-1-39. `selectedKeySet`만 `null`을 거르지 않았다.
+ *
+ * 형제 두 줄(`selectedFarmerKeySet`)도, `allUsedKeys`도, `exemptKeys`도 전부 거르는데
+ * 여기만 빠져 있었다. `new Set([null]).has(null)`이 `true`라서, 공익 추출에 뽑힌
+ * 필지 중 키 없는 것이 하나라도 있으면 **무관한 키 없는 적격 대표필지가 전부**
+ * `repDirect`에서 빠진다. 경고도 콘솔 메시지도 안 뜬다.
+ */
+describe('적격 대표필지 추가 — 무관한 필지의 데이터 품질에 좌우되지 않는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  /**
+   * 경영체번호를 갈라 둔다. 같으면 `parcelFarmerKey`(`farmerId_ri_parcelId`)가
+   * 둘 다 `F001_A리_`로 충돌해 마스터가 대표필지로 태깅되고, 그러면 대표필지 행이
+   * 사라졌는데도 `isRepresentative` 집계가 1이 되어 **테스트가 거짓 통과한다.**
+   * 실제로 이 함정에 한 번 걸렸다.
+   */
+  const setup = (masterKeyed: boolean) => {
+    const master = makeParcel(
+      masterKeyed
+        ? { farmerId: 'F_MASTER', pnu: 'PNU_MASTER', ri: 'A리', area: 1000 }
+        : { farmerId: 'F_MASTER', pnu: '', address: '', parcelId: '', ri: 'A리', area: 1000 },
+    );
+    // 키 없는 적격 대표필지. 마스터와는 아무 관계가 없다.
+    const rep = makeParcel({
+      farmerId: 'F_REP',
+      pnu: '',
+      address: '',
+      parcelId: '',
+      ri: 'A리',
+      area: 1000,
+    });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction([master], [rep]);
+    return { result: useExtractionStore.getState().result!, rep };
+  };
+
+  it('마스터에 키가 있으면 대표필지가 결과에 들어간다', () => {
+    const { result, rep } = setup(true);
+    expect(result.selectedParcels.map((p) => p.rowUid)).toContain(rep.rowUid);
+    expect(result.selectedParcels.filter(isRepresentative)).toHaveLength(1);
+  });
+
+  /**
+   * **이것이 이 티켓의 CRITICAL이다.** 마스터의 데이터 품질만 바뀌었을 뿐
+   * 대표필지는 그대로인데 대표필지가 결과에서 사라졌다.
+   *
+   * 실측(수정 전): 마스터에 키가 있으면 2행 `["public-payment","representative"]`,
+   * 키가 없으면 **1행 `["public-payment"]`** — 대표필지 증발.
+   * 그런데 `representativeSummary.limited`는 그대로 1이라 **화면 숫자와 산출물이
+   * 어긋난다.** 경고도 콘솔 메시지도 뜨지 않는다.
+   */
+  it('마스터에 키가 없어도 대표필지가 사라지지 않는다', () => {
+    const { result, rep } = setup(false);
+    expect(result.selectedParcels.map((p) => p.rowUid)).toContain(rep.rowUid);
+    expect(result.selectedParcels.filter(isRepresentative)).toHaveLength(1);
+  });
+
+  /** 화면이 "1건 포함"이라고 말하면 산출물에도 1건이 있어야 한다. */
+  it('화면의 대표필지 수와 산출물의 대표필지 수가 같다', () => {
+    const { result } = setup(false);
+    expect(result.selectedParcels.filter(isRepresentative)).toHaveLength(
+      result.representativeSummary!.limited,
+    );
+  });
+});
+
+/**
+ * PROJ1-1-39. `masterCandidates`가 키 없는 후보를 무조건 통과시키고, 보충 루프도
+ * `if (k !== null)` 안에서만 중복을 본다. 그래서 **이미 `taggedPublic`에 들어 있는
+ * 키 없는 마스터 행이 대체 보충으로 다시 담긴다.**
+ *
+ * `dedupeSelected`는 키 없는 필지를 접지 않고(의도된 규칙), `countUniqueSelected`는
+ * `'each'`라 2건으로 센다. 700 목표가 실제 699필지 + 중복 1행으로 채워진다.
+ */
+describe('대체 보충 — 같은 행을 두 번 싣지 않는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  it('공익에 이미 뽑힌 키 없는 행이 대체 보충으로 다시 담기지 않는다', () => {
+    const unidentified = Array.from({ length: 3 }, () =>
+      makeParcel({ pnu: '', address: '', parcelId: '', ri: 'A리', area: 1000 }),
+    );
+    const badRep = makeParcel({ pnu: 'REP_BAD', ri: 'A리', isEligible: false, area: 1000 });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 3,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction(unidentified, [badRep]);
+
+    const rows = useExtractionStore.getState().result!.selectedParcels;
+    const uids = rows.map((p) => p.rowUid);
+    // 마스터 행이 3개뿐인데 결과가 4행이면 한 행이 두 번 실린 것이다
+    expect(new Set(uids).size).toBe(uids.length);
+    expect(rows.length).toBeLessThanOrEqual(3);
+  });
+});
+
+/**
+ * 대체 보충 루프는 담은 것을 **바로** 집합에 반영해야 한다.
+ *
+ * 마스터에는 같은 지번이 작물별로 여러 행 있다. 루프 전에 만든 집합만 보면 그 쌍이
+ * 둘 다 담기고 뒤의 `dedupeSelected`가 하나로 접는다 — **대체 복사 200건이 조용히
+ * 100건이 됐고 "대체 부족" 경고도 안 떴다.**
+ *
+ * 이 규칙은 코드 주석에만 있었고 테스트가 없었다(PROJ1-1-39 변이 검증에서 발견).
+ */
+describe('대체 보충 — 담은 것을 바로 반영한다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  it('같은 필지의 다른 작물 행을 두 번 담지 않는다', () => {
+    // 같은 지번(=같은 필지 키)의 두 행 — 작물만 다르다
+    const dupA1 = makeParcel({ pnu: 'PNU_A', ri: 'A리', area: 1000, cropType: '벼' });
+    const dupA2 = makeParcel({ pnu: 'PNU_A', ri: 'A리', area: 1000, cropType: '콩' });
+    const distinctB = makeParcel({ pnu: 'PNU_B', ri: 'A리', area: 1000 });
+    // 부적격 대표필지 2건 → 대체 2건을 채워야 한다
+    const badReps = [
+      makeParcel({ pnu: 'REP_X', ri: 'A리', isEligible: false, area: 1000 }),
+      makeParcel({ pnu: 'REP_Y', ri: 'A리', isEligible: false, area: 1000 }),
+    ];
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 0, // 공익 추출을 건너뛰어 보충 루프만 본다
+        perRiTarget: 0,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction([dupA1, dupA2, distinctB], badReps);
+
+    const rows = useExtractionStore.getState().result!.selectedParcels;
+    // PNU_A를 두 행 담으면 dedupe가 하나로 접어 결국 1건이 된다 —
+    // 그러면 부적격 2건을 대체한다고 해 놓고 실제로는 1건만 나간다
+    expect(rows.filter((p) => p.pnu === 'PNU_A')).toHaveLength(1);
+    expect(rows.map((p) => p.pnu).sort()).toEqual(['PNU_A', 'PNU_B']);
   });
 });
