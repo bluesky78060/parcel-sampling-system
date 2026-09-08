@@ -511,9 +511,24 @@ export async function batchGeocode(
         // adaptive concurrency 조절용 카운트. 실패 집계는 아래 배타 체인에서 한다.
         if (rateLimited) chunkRateLimited++;
 
-        // 결과를 모든 동일 주소 필지에 복사
-        for (const idx of entry.allIndices) {
-          results[idx] = { ...results[idx], coords };
+        // 결과를 모든 동일 주소 필지에 복사.
+        //
+        // **실패가 서버 사정이면 낡은 좌표를 지킨다.** 여기서 구분하지 않으면
+        // `force=true`(좌표 재변환)가 이미 확보한 좌표를 파괴한다 — 재변환은
+        // 좌표가 있는 필지도 `needsGeocode`에 넣기 때문이다. 캐시는 재변환 직전에
+        // 비워지므로 **되돌릴 방법이 없다.**
+        //
+        //   notFound              서버가 답했고 그 주소에 좌표가 없다  → 지운다
+        //   quota/unreachable/auth  서버 사정. 데이터에 대해 무언(無言) → 지킨다
+        //
+        // 실측(수정 전, 좌표를 다 가진 200건): 서버 무응답 200→150,
+        // notFound 폭주 200→0. 후자는 `serviceDown=false`라 **화면이 "변환 완료"라고
+        // 말하면서** 좌표가 전멸했다. 아래 배타 체인이 쓰는 판정을 그대로 쓴다.
+        const serviceFailure = coords === null && (rateLimited || authRejected || unreachable);
+        if (!serviceFailure) {
+          for (const idx of entry.allIndices) {
+            results[idx] = { ...results[idx], coords };
+          }
         }
 
         // IndexedDB 저장은 geocodeAddress가 이미 하고 있으므로 여기서 또 쓰지 않는다
