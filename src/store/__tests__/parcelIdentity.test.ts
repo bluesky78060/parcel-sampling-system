@@ -762,3 +762,50 @@ describe('대표필지와 공익직불제의 혼용', () => {
     expect(rows.filter(isPublicPayment)).toHaveLength(2);
   });
 });
+
+/**
+ * PROJ1-1-41 리뷰가 지적한 **세 번째 경로**. 사용자 결정(2026-09-08)으로 현행을 확정했다.
+ *
+ * `taggedPublic`(공익 추출이 실제로 뽑은 대표필지)은 `markAsRepresentative`가 처리하고
+ * **경영체번호를 보지 않는다.** 번호가 비어도 이미 700 안에 들어간 행이므로 공익직불제
+ * 시트에 있는 것이 맞다 — 빼면 제출 파일의 행 수가 줄어든다. 번호가 빈 것은
+ * `FARMER_ID_MISSING` 경고가 따로 알린다.
+ *
+ * "세 경로를 통일한다"며 이것을 `representativeCategoryOf`로 옮기면 그 결함이
+ * 정확히 되살아난다. 그 통일이 조용히 들어오지 못하게 못 박아 둔다.
+ */
+describe('공익 추출이 뽑은 대표필지는 번호가 없어도 공익직불제 시트에 남는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  it('번호 없는 대표필지가 공익에 뽑히면 both다', () => {
+    // 마스터와 대표필지가 같은 필지(PNU 일치) → 공익 추출이 뽑으면 taggedPublic이 된다
+    const shared = makeParcel({ farmerId: '', pnu: 'PNU_SHARED', ri: 'A리', area: 1000 });
+    const rep = makeParcel({ farmerId: '', pnu: 'PNU_SHARED', ri: 'A리', area: 1000 });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction([shared], [rep]);
+
+    const row = useExtractionStore
+      .getState()
+      .result!.selectedParcels.find((p) => p.pnu === 'PNU_SHARED')!;
+    expect(row.parcelCategory).toBe('both');
+    expect(isPublicPayment(row)).toBe(true); // ← 공익직불제 시트에 남는다
+    expect(isRepresentative(row)).toBe(true);
+  });
+});

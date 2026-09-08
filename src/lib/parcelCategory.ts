@@ -1,4 +1,5 @@
 import type { Parcel, ParcelCategory } from '../types';
+import { hasFarmerId } from './parcelKey';
 
 /**
  * 필지 분류 판정 — **여기를 거쳐서만 판정한다.**
@@ -22,6 +23,10 @@ export function isPublicPayment(p: Parcel): boolean {
 /**
  * 기존 카테고리에 "대표필지" 성격을 더한다.
  * 공익 추출분이면 `'both'`가 되고, 이미 대표필지면 그대로다.
+ *
+ * **경영체번호를 보지 않는다.** 이것을 쓰는 곳(`taggedPublic`)은 공익직불제 추출이
+ * 실제로 뽑은 행이라, 번호가 비어도 이미 700 안에 들어가 있다. 여기서 빼면 제출
+ * 파일의 행 수가 줄어든다. 번호 기준을 적용하는 쪽은 `representativeCategoryOf`다.
  */
 export function markAsRepresentative(cat: ParcelCategory | undefined): ParcelCategory {
   return (cat ?? 'public-payment') === 'public-payment' ? 'both' : (cat ?? 'representative');
@@ -35,18 +40,25 @@ export function categoryLabel(p: Parcel): string {
 }
 
 /**
- * 대표필지로 확정된 필지의 분류.
+ * **공익 추출에 뽑히지 않은** 대표필지의 분류 — `repDirect`와 `repSupplements` 전용.
  *
- * **경영체번호가 있으면 공익직불제와 혼용된다** — 그 필지는 공익직불제 대상이기도
- * 하므로 양쪽 시트에 모두 실려야 한다. 번호가 없으면 공익직불제 대상이 아니므로
- * 대표필지 시트에만 남는다.
+ * 경영체번호가 있으면 공익직불제와 혼용된다. 그 필지는 공익직불제 대상이기도 하므로
+ * 양쪽 시트에 모두 실려야 한다. 번호가 없으면 공익직불제 대상이 아니라 대표필지
+ * 시트에만 남는다.
  *
  * 예전에는 `parcelCategory: 'representative'`로 **무조건 덮어썼다.** 그러면
  * `isPublicPayment`가 false가 되어 공익직불제 시트(`{연도}_필지선정`)에서 사라지고,
- * **담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.** 공익 추출에도 뽑힌
- * 대표필지(`taggedPublic`)에는 이 위험이 이미 주석으로 적혀 있었는데,
- * 안 뽑힌 쪽(`repDirect`)과 대체 보충분(`repSupplements`)에만 빠져 있었다.
+ * **담당자에게 나가는 제출 파일의 행 수가 조용히 줄어든다.**
+ *
+ * ⚠️ **`taggedPublic`에는 이 함수를 쓰지 않는다 — 의도된 예외다.**
+ * `taggedPublic`은 공익직불제 추출이 **실제로 뽑은** 행이다. 번호가 비어 있어도
+ * 이미 700 안에 들어간 것이므로 공익직불제 시트에 있는 것이 맞다(빼면 제출 파일의
+ * 행 수가 줄어든다). 번호가 빈 것은 `FARMER_ID_MISSING` 경고가 따로 알린다.
+ * 그쪽은 `markAsRepresentative`가 담당하고, 번호를 보지 않는다.
+ *
+ * "세 경로를 통일한다"며 `taggedPublic`을 여기로 옮기면 **이 함수가 막으려던 결함이
+ * 정확히 그 자리에서 되살아난다.** 사용자 결정(2026-09-08)으로 현행을 확정했다.
  */
 export function representativeCategoryOf(p: Parcel): ParcelCategory {
-  return p.farmerId ? 'both' : 'representative';
+  return hasFarmerId(p) ? 'both' : 'representative';
 }
