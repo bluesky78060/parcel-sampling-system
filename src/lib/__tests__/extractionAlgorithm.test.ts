@@ -211,7 +211,11 @@ describe('extractParcels — 결과 불변식', () => {
     // 정규 키로 판정한다. 예전에는 여기서 `farmerId__parcelId`를 조립했는데,
     // 그 공식은 경영체번호가 비면 리를 넘어 충돌해 **알고리즘이 옳게 동작해도
     // 단언 단계에서 오탐**이 났다(PROJ1-1-37).
-    const keys = result.selectedParcels.map(parcelMatchKey);
+    // 키 없는 필지는 서로 다른 것으로 본다(`dedupeSelected`와 같은 정책).
+    // 걸러내지 않으면 `new Set([null, null]).size === 1`이라 프로덕션의 반대를 단언한다.
+    const keys = result.selectedParcels
+      .map(parcelMatchKey)
+      .filter((k): k is string => k !== null);
     expect(new Set(keys).size).toBe(keys.length);
   });
 
@@ -220,9 +224,13 @@ describe('extractParcels — 결과 불변식', () => {
       parcels,
       makeConfig({ totalTarget: 30, publicPaymentTarget: 30 }),
     );
-    const inputKeys = new Set(parcels.map(parcelMatchKey));
+    // `Set<string | null>`로 두면 키 없는 선정분이 공허하게 통과한다
+    const inputKeys = new Set(
+      parcels.map(parcelMatchKey).filter((k): k is string => k !== null),
+    );
     for (const p of result.selectedParcels) {
-      expect(inputKeys.has(parcelMatchKey(p))).toBe(true);
+      const k = parcelMatchKey(p);
+      expect(k === null || inputKeys.has(k)).toBe(true);
     }
   });
 
