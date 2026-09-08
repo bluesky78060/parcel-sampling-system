@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 import type { Parcel, ColumnMapping, ParcelCategory } from '../types';
 import { parseLotNumber, buildParcelId, parseSido } from './addressParser';
+import { newRowUid } from './parcelKey';
 
 /**
  * 엑셀 파일에서 시트명 목록 추출
@@ -212,6 +213,7 @@ export function applyColumnMapping(
     }
 
     return {
+      rowUid: newRowUid(),
       farmerId: normalizeId(String(row[mapping.farmerId] ?? '')),
       farmerName: mapping.farmerName ? String(row[mapping.farmerName] ?? '') : '',
       parcelId,

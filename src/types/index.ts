@@ -17,6 +17,17 @@ export interface LatLng {
 export type ParcelCategory = 'public-payment' | 'representative' | 'both';
 
 export interface Parcel {
+  /**
+   * 이 **행**의 식별자. 파싱 시점에 부여되고 사본에도 그대로 따라간다.
+   *
+   * `parcelMatchKey`(같은 **필지**인가)와 답하는 질문이 다르다.
+   * 필지 정체성을 데이터 품질에서 유도하면 — PNU가 있으면 PNU, 없으면 주소+지번,
+   * 그것도 없으면 참조 — 사본이 만들어지는 순간 마지막 수단마저 끊긴다.
+   * 그래서 선택/해제/삭제 같은 **행 조작**은 이 값으로 한다.
+   *
+   * 내부 식별자다. 엑셀 산출물에 나가지 않는다.
+   */
+  rowUid: string;
   farmerId: string;
   farmerName: string;
   parcelId: string;

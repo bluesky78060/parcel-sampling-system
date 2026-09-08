@@ -1,4 +1,5 @@
 import type { ExtractionConfig, LatLng, Parcel } from '../../types';
+import { newRowUid } from '../parcelKey';
 
 /**
  * 테스트용 Parcel 생성기.
@@ -18,6 +19,8 @@ export function makeParcel(overrides: Partial<Parcel> = {}): Parcel {
   // 주소 자체를 검증하는 테스트는 `address`를 명시적으로 덮어쓰면 된다.
   const parcelId = overrides.parcelId ?? '100';
   return {
+    // 행마다 고유해야 한다 — 고정값을 주면 서로 다른 필지가 같은 행으로 취급된다
+    rowUid: newRowUid(),
     farmerId: 'F001',
     farmerName: '홍길동',
     parcelId,
