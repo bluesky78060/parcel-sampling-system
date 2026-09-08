@@ -11,7 +11,7 @@ import type { Parcel } from '../types';
  * - Set 구축: 넣지 않는다
  * - Set 조회: `false`로 본다
  * - dedupe: **접지 않고 각각 남긴다** — 빈 키끼리 같은 필지로 볼 근거가 없다
- * - 삭제: 참조로 비교한다 — 키가 없으면 그것만이 안전하다
+ * - 삭제·선택: 키가 없으면 `rowUid`(행 식별자)로 비교한다 — 참조는 사본에서 끊긴다
  */
 export function parcelMatchKey(p: Parcel): string | null {
   if (p.pnu) return p.pnu;

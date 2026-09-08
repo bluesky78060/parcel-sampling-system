@@ -39,6 +39,10 @@ export function mergeWithRepresentatives(
  * 예전 키(`farmerId__parcelId`)는 경영체번호가 비면 `__100-1` 형태로 리를 넘어
  * 충돌했다. 그래서 **선정된 문단리 필지 때문에 미선정 법전리 필지가 "이미 선택됨"으로
  * 판정되어 대기 목록에서 빠졌다** — 사용자가 대체 필지를 고르려 해도 목록에 없었다.
+ *
+ * 키가 없으면 `rowUid`(행 식별자)로 본다. 예전에는 "알 수 없으니 빼지 않는다"였는데,
+ * 그러면 키 없는 필지를 추가한 순간 **같은 행이 표에 두 번 나오고 둘 다 체크된 채로
+ * 보였다.** 산출물은 멀쩡하지만 화면이 사실과 달랐다.
  */
 export function buildTableParcels(allParcels: Parcel[], selectedParcels: Parcel[]): Parcel[] {
   if (allParcels.length === 0) return selectedParcels;
@@ -47,10 +51,11 @@ export function buildTableParcels(allParcels: Parcel[], selectedParcels: Parcel[
   const selectedKeys = new Set(
     selectedParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
   );
+  const selectedRowUids = new Set(selectedParcels.map((p) => p.rowUid));
   const unselected = eligible.filter((p) => {
     const key = parcelMatchKey(p);
-    // 키가 없으면 "이미 선정됐는지" 알 수 없다 — 목록에서 빼지 않는다
-    return key === null || !selectedKeys.has(key);
+    if (key === null) return !selectedRowUids.has(p.rowUid);
+    return !selectedKeys.has(key);
   });
   return [...selectedParcels, ...unselected];
 }

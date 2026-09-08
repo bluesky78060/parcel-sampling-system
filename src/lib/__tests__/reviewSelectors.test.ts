@@ -110,6 +110,25 @@ describe('buildTableParcels', () => {
     const unidentified = makeParcel({ pnu: '', address: '', parcelId: '' });
     expect(buildTableParcels([unidentified], [])).toHaveLength(1);
   });
+
+  /**
+   * 예전에는 키가 없으면 "알 수 없으니 빼지 않는다"였다. 그래서 키 없는 필지를
+   * 추가하는 순간 **같은 행이 표에 두 번 나오고 둘 다 체크된 채로 보였다.**
+   * `rowUid`가 생긴 지금은 같은 행인지 알 수 있다.
+   */
+  it('키가 없어도 이미 선정된 그 행은 미선정 목록에 다시 나오지 않는다', () => {
+    const p = makeParcel({ pnu: '', address: '', parcelId: '' });
+    const stored = { ...p, isSelected: true }; // 스토어는 사본을 담는다
+    expect(buildTableParcels([p], [stored])).toHaveLength(1);
+  });
+
+  it('키가 없는 다른 행은 그대로 남는다', () => {
+    const a = makeParcel({ pnu: '', address: '', parcelId: '' });
+    const b = makeParcel({ pnu: '', address: '', parcelId: '' });
+    const table = buildTableParcels([a, b], [{ ...a, isSelected: true }]);
+    expect(table).toHaveLength(2);
+    expect(table.some((x) => x.rowUid === b.rowUid)).toBe(true);
+  });
 });
 
 describe('buildMapSelectedParcels', () => {

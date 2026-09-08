@@ -68,7 +68,6 @@ export function ResultTable({
         header: () => <span className="text-xs text-gray-500">선택</span>,
         cell: ({ row }) => {
           const parcel = row.original;
-          // 키가 없으면 참조로 판정한다 — 선정분은 스토어의 객체가 그대로 넘어온다.
           const key = parcelMatchKey(parcel);
           const isSelected =
             key !== null ? selectedSet.has(key) : selectedRowUids.has(parcel.rowUid);
@@ -84,8 +83,6 @@ export function ResultTable({
             );
           }
 
-          // PNU도 주소도 지번도 없는 필지는 **선택할 수 없다.**
-          //
           return (
             <button
               onClick={() => {
@@ -312,7 +309,7 @@ export function ResultTable({
               const parcel = row.original;
               const key = parcelMatchKey(parcel);
               const isSelected =
-            key !== null ? selectedSet.has(key) : selectedRowUids.has(parcel.rowUid);
+                key !== null ? selectedSet.has(key) : selectedRowUids.has(parcel.rowUid);
               const isRep = isRepresentative(parcel);
 
               return (
