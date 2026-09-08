@@ -202,6 +202,44 @@ describe('categoryLabel', () => {
 });
 
 /**
+ * PROJ1-1-40. `parcelId`가 비면 `F001_A리_` 형태가 되어 **한 농가가 같은 리에 가진
+ * 지번 미상 필지들이 전부 같은 필지로 취급된다.** `parcelMatchKey`가 `'__'`를
+ * 돌려주던 것을 `null`로 바꾼 것과 정확히 같은 결함 유형인데 이쪽만 방치돼 있었다.
+ */
+describe('parcelFarmerKey — 지번이 없으면 키를 만들지 않는다', () => {
+  it('경영체번호와 지번이 다 있으면 키를 만든다', () => {
+    expect(parcelFarmerKey(makeParcel({ farmerId: 'F1', ri: 'A리', parcelId: '100' }))).toBe(
+      'F1_A리_100',
+    );
+  });
+
+  it('경영체번호가 없으면 null이다', () => {
+    expect(parcelFarmerKey(makeParcel({ farmerId: '', parcelId: '100' }))).toBeNull();
+  });
+
+  /** **이것이 PROJ1-1-40이다.** */
+  it('지번이 없으면 null이다', () => {
+    expect(parcelFarmerKey(makeParcel({ farmerId: 'F1', ri: 'A리', parcelId: '' }))).toBeNull();
+  });
+
+  it('지번 없는 두 필지가 같은 키로 뭉치지 않는다', () => {
+    const a = makeParcel({ farmerId: 'F1', ri: 'A리', parcelId: '' });
+    const b = makeParcel({ farmerId: 'F1', ri: 'A리', parcelId: '' });
+    expect(parcelFarmerKey(a)).toBeNull();
+    expect(parcelFarmerKey(b)).toBeNull();
+    // keySetOf가 null을 거르므로 집합에도 안 들어간다 — 하나가 나머지를 막지 못한다
+    expect(keySetOf([a, b], parcelFarmerKey).size).toBe(0);
+  });
+
+  /** 리가 다르면 지번이 같아도 다른 키다 — 기존 보호가 유지되는지. */
+  it('리가 다르면 지번이 같아도 다른 키다', () => {
+    const mun = parcelFarmerKey(makeParcel({ farmerId: 'F1', ri: '문단리', parcelId: '100' }));
+    const beop = parcelFarmerKey(makeParcel({ farmerId: 'F1', ri: '법전리', parcelId: '100' }));
+    expect(mun).not.toBe(beop);
+  });
+});
+
+/**
  * `keySetOf` — 키 집합을 만드는 유일한 방법.
  *
  * 이 필터가 호출부에 흩어져 있을 때 `extractionStore`에서만 세 번 결함이 났고

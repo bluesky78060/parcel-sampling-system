@@ -64,7 +64,15 @@ export function keySetOf(parcels: readonly Parcel[], key: (p: Parcel) => string 
 }
 
 export function parcelFarmerKey(p: Parcel): string | null {
-  return p.farmerId ? `${p.farmerId}_${p.ri}_${p.parcelId}` : null;
+  // 지번이 비면 키를 만들지 않는다. `F001_A리_` 형태가 되어 **한 농가가 같은 리에
+  // 가진 지번 미상 필지들이 전부 같은 필지가 된다.** 형제 함수 `parcelMatchKey`가
+  // `'__'`를 돌려주던 것을 `null`로 바꾼 것과 정확히 같은 이유다(PROJ1-1-37) —
+  // 이쪽만 방치돼 있었다(PROJ1-1-40).
+  //
+  // 폴백이 통째로 없어지는 것이 아니다. **지번이 있는 필지는 그대로 매칭된다.**
+  // 지번도 PNU도 주소도 없는 행은 애초에 어느 필지인지 말할 수 없다.
+  if (!p.farmerId || !p.parcelId) return null;
+  return `${p.farmerId}_${p.ri}_${p.parcelId}`;
 }
 
 /**

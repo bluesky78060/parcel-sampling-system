@@ -271,7 +271,11 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
         const sameParcel = (repMk ? masterByKey.get(repMk) : undefined)
           // 경영체번호가 없으면 PNU/주소 매칭만 쓴다 — 빈 값 폴백은 오매칭을 부른다
           || (repFk ? masterByFarmerKey.get(repFk) : undefined)
-          || (rep.farmerId
+          // ⚠️ `parcelId`가 비면 이 폴백도 쓰지 않는다. 양쪽 다 `''`이면 `===`가 참이 되어
+          // 무관한 필지가 같은 필지로 매칭되고, 그 PNU·좌표가 대표필지 행에 기입돼
+          // 제출 파일로 나간다(PROJ1-1-40). `parcelFarmerKey`만 고치면 여기가 남는다 —
+          // 템플릿 문자열이 아니라 `===` 비교라 `grep`으로도 안 잡힌다.
+          || (rep.farmerId && rep.parcelId
             ? allParcels.find(p =>
                 p.farmerId === rep.farmerId && p.parcelId === rep.parcelId && sameRi(p.ri, rep.ri))
             : undefined);
