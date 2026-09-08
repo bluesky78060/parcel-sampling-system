@@ -81,3 +81,29 @@ export function hasFarmerId(p: Parcel): boolean {
 export function farmerGroupKey(p: Parcel, index: number): string {
   return p.farmerId || `__nofarmer_${index}`;
 }
+
+/**
+ * 고유 필지 수.
+ *
+ * 식별 불가능한 필지(키가 `null`)를 어떻게 셀지는 **묻는 질문에 따라 다르다.**
+ * 한 함수를 복사해 쓰면 그 차이가 조용히 사라진다.
+ *
+ * - `'each'` — **결과 집계.** 그 행들은 실제로 엑셀에 나가므로 각각 1건이다
+ * - `'exclude'` — **달성 가능성 판정.** 식별 불가능한 필지는 `ri`가 비어 리 그룹에
+ *   들어가지 못하고 지오코딩도 안 되며 현장 지시서로 쓸 수 없다. 가용 재고로 세면
+ *   "달성 가능"이 낙관 쪽으로 기울어, 분석 화면에서 가능하다고 보고 진행했다가
+ *   추출 후에야 미달을 만난다
+ */
+export function countUniqueParcels(
+  parcels: Parcel[],
+  unidentified: 'each' | 'exclude',
+): number {
+  const keys = new Set<string>();
+  let unidentifiedCount = 0;
+  for (const p of parcels) {
+    const key = parcelMatchKey(p);
+    if (key === null) unidentifiedCount++;
+    else keys.add(key);
+  }
+  return keys.size + (unidentified === 'each' ? unidentifiedCount : 0);
+}

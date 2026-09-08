@@ -46,6 +46,8 @@ export function ResultTable({
     return set;
   }, [selectedParcels]);
 
+
+
   const columns = useMemo<ColumnDef<Parcel>[]>(
     () => [
       {
@@ -53,6 +55,8 @@ export function ResultTable({
         header: () => <span className="text-xs text-gray-500">선택</span>,
         cell: ({ row }) => {
           const parcel = row.original;
+          // 키가 없으면 참조로 판정한다 — `removeParcel`이 쓰는 규칙과 같다.
+          // `false`로 두면 선택 표시가 영영 켜지지 않아 클릭할 때마다 중복 추가된다.
           const key = parcelMatchKey(parcel);
           const isSelected = key !== null && selectedSet.has(key);
           const isRep = isRepresentative(parcel);
@@ -62,6 +66,27 @@ export function ResultTable({
               <span className="w-5 h-5 rounded border flex items-center justify-center bg-emerald-500 border-emerald-500 text-white cursor-not-allowed" title="대표필지 (고정)">
                 <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              </span>
+            );
+          }
+
+          // PNU도 주소도 지번도 없는 필지는 **선택할 수 없다.**
+          //
+          // `addParcel`이 `{...parcel, isSelected: true}` 사본을 저장하므로 참조가
+          // 끊기고, 키가 없으면 그 사본을 다시 찾을 방법이 없다. 그대로 두면
+          // 선택 표시가 켜지지 않아 클릭할 때마다 중복이 쌓이고 UI로는 뺄 수 없다.
+          //
+          // 애초에 이런 필지는 지오코딩도 안 되고 현장 지시서로도 쓸 수 없다.
+          // 700에 넣는 것 자체가 문제이므로, 원본을 고쳐 오도록 안내한다.
+          if (key === null) {
+            return (
+              <span
+                className="w-5 h-5 rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-400 cursor-not-allowed"
+                title="PNU·주소·필지번호가 모두 비어 있어 이 필지를 식별할 수 없습니다. 원본 파일을 확인하세요."
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 12H6" />
                 </svg>
               </span>
             );

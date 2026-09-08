@@ -169,6 +169,21 @@ export function ReviewPage() {
       });
   }, [allParcelsWithRep, selectedParcels]);
 
+  /**
+   * 지도 마커 상세 패널의 선택 표시.
+   *
+   * 예전에는 `p.farmerId === ... && p.parcelId === ...`로 매 렌더 두 번 순회했다.
+   * 그 비교는 `removeParcel`에서 걷어낸 바로 그 술어이고, 경영체번호가 비면
+   * 리를 넘어 충돌해 **마커 색은 회색인데 패널만 "추출 선택"이라고 말했다.**
+   * `grep`으로는 안 잡힌다 — 템플릿 문자열이 아니라 `===` 비교이기 때문이다.
+   */
+  const isMarkerParcelSelected = useMemo(() => {
+    if (!selectedMarkerParcel) return false;
+    const key = parcelMatchKey(selectedMarkerParcel);
+    if (key === null) return selectedParcels.includes(selectedMarkerParcel);
+    return selectedParcels.some((p) => parcelMatchKey(p) === key);
+  }, [selectedMarkerParcel, selectedParcels]);
+
   const riList = useMemo(() => getRiList(), [getRiList]);
 
   const mapLegendCounts = useMemo(() => {
@@ -536,14 +551,10 @@ export function ReviewPage() {
                     ) : (
                       <span
                         className={`font-semibold ${
-                          selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
-                            ? 'text-blue-600'
-                            : 'text-gray-400'
+                          isMarkerParcelSelected ? 'text-blue-600' : 'text-gray-400'
                         }`}
                       >
-                        {selectedParcels.some((p) => p.farmerId === selectedMarkerParcel.farmerId && p.parcelId === selectedMarkerParcel.parcelId)
-                          ? '추출 선택'
-                          : '미선택'}
+                        {isMarkerParcelSelected ? '추출 선택' : '미선택'}
                       </span>
                     )}
                   </div>

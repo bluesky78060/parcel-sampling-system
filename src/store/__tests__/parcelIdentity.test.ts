@@ -4,6 +4,7 @@ import {
   dedupeSelected,
   useExtractionStore,
 } from '../extractionStore';
+import { countUniqueParcels } from '../../lib/parcelKey';
 import { makeParcel } from '../../lib/__tests__/factories';
 import type { ExtractionResult, Parcel } from '../../types';
 
@@ -149,5 +150,111 @@ describe('removeParcel — 삭제가 번지지 않는다', () => {
   it('결과가 없으면 아무 일도 하지 않는다', () => {
     useExtractionStore.getState().removeParcel(munDanRi());
     expect(useExtractionStore.getState().result).toBeNull();
+  });
+});
+
+/**
+ * `addParcel`이 무조건 append하던 것을 멱등하게 바꿨다.
+ *
+ * 식별 불가능한 필지는 `ResultTable`에서 키로 조회할 수 없어 선택 표시가 켜지지
+ * 않았고, **클릭할 때마다 계속 쌓이면서 UI로는 뺄 수 없었다.** 700 산출물이
+ * 그만큼 부풀어 엑셀에 그대로 나갔다.
+ */
+describe('addParcel — 중복 추가가 쌓이지 않는다', () => {
+  const makeResult = (selectedParcels: Parcel[]): ExtractionResult => ({
+    selectedParcels,
+    riStats: [],
+    farmerStats: [],
+    validation: { isValid: true, warnings: [], errors: [] },
+  });
+
+  beforeEach(() => {
+    useExtractionStore.setState({ result: null });
+  });
+
+  it('같은 필지를 두 번 넣어도 한 번만 들어간다', () => {
+    const p = makeParcel({ pnu: 'PNU_A' });
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(p);
+    useExtractionStore.getState().addParcel(p);
+
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(1);
+  });
+
+  it('키가 같으면 다른 객체여도 한 번만 들어간다', () => {
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(makeParcel({ pnu: 'PNU_A' }));
+    useExtractionStore.getState().addParcel(makeParcel({ pnu: 'PNU_A' }));
+
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(1);
+  });
+
+  it('키가 다르면 각각 들어간다', () => {
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(makeParcel({ pnu: 'PNU_A' }));
+    useExtractionStore.getState().addParcel(makeParcel({ pnu: 'PNU_B' }));
+
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(2);
+  });
+
+  it('넣었다 뺄 수 있다', () => {
+    const p = makeParcel({ pnu: 'PNU_A' });
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(p);
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(1);
+
+    useExtractionStore.getState().removeParcel(p);
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(0);
+  });
+
+  /**
+   * **멱등화의 한계를 명시한다.**
+   *
+   * `addParcel`은 `{...parcel, isSelected: true}` 사본을 저장하므로, 키가 없는 필지는
+   * 참조가 끊겨 중복 검사가 실패한다. 그래서 `ResultTable`이 그런 필지의 선택 자체를
+   * 막는다 — 지오코딩도 안 되고 현장 지시서로도 쓸 수 없는 필지라 그 편이 옳다.
+   *
+   * 이 테스트는 그 한계가 **의도된 것**임을 기록한다. UI가 막지 않게 되면
+   * 여기서부터 다시 새야 하므로, 그때 이 테스트가 먼저 눈에 띈다.
+   */
+  it('[의도된 한계] 식별 불가능한 필지는 사본 때문에 중복 검사가 안 된다', () => {
+    const p = makeParcel({ pnu: '', address: '', parcelId: '' });
+    useExtractionStore.setState({ result: makeResult([]) });
+
+    useExtractionStore.getState().addParcel(p);
+    useExtractionStore.getState().addParcel(p);
+
+    // 막히지 않는다 — 그래서 UI에서 아예 선택할 수 없게 했다
+    expect(useExtractionStore.getState().result!.selectedParcels).toHaveLength(2);
+  });
+});
+
+/**
+ * 식별 불가능한 필지를 어떻게 셀지는 **묻는 질문에 따라 다르다.**
+ * 한 함수를 복사해 쓰면 그 차이가 조용히 사라진다.
+ */
+describe('countUniqueParcels — 정책이 갈린다', () => {
+  const unidentified = () => makeParcel({ pnu: '', address: '', parcelId: '' });
+
+  it("'each' — 결과 집계에서는 각각 1건이다", () => {
+    expect(countUniqueParcels([unidentified(), unidentified()], 'each')).toBe(2);
+  });
+
+  it("'exclude' — 달성 가능성 판정에서는 세지 않는다", () => {
+    expect(countUniqueParcels([unidentified(), unidentified()], 'exclude')).toBe(0);
+  });
+
+  it('식별 가능한 필지는 두 정책이 같다', () => {
+    const ps = [makeParcel({ pnu: 'PNU_A' }), makeParcel({ pnu: 'PNU_B' })];
+    expect(countUniqueParcels(ps, 'each')).toBe(2);
+    expect(countUniqueParcels(ps, 'exclude')).toBe(2);
+  });
+
+  it('countUniqueSelected는 결과 집계 정책을 쓴다', () => {
+    expect(countUniqueSelected([unidentified(), unidentified()])).toBe(2);
   });
 });

@@ -3,7 +3,7 @@ import type { ExtractionConfig, ExtractionResult, Parcel, SpatialConfig, Validat
 import { extractParcels, getParcelArea, validateExtraction, generateRiStats, generateFarmerStats, MIN_AREA } from '../lib/extractionAlgorithm';
 import { calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { isRepresentative, markAsRepresentative } from '../lib/parcelCategory';
-import { parcelMatchKey, parcelFarmerKey } from '../lib/parcelKey';
+import { parcelMatchKey, parcelFarmerKey, countUniqueParcels } from '../lib/parcelKey';
 
 /**
  * 대표필지를 상한만큼 리별로 고르게 남긴다.
@@ -56,7 +56,7 @@ const farmerKey = parcelFarmerKey;
  * 정규 키로 비교하되, 키가 없는(식별 불가능한) 필지는 **참조로만** 판정한다 —
  * 그것이 유일하게 안전하다.
  */
-function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
+export function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
   const key = matchKey(target);
   if (key === null) return (p) => p === target;
   return (p) => matchKey(p) === key;
@@ -83,16 +83,9 @@ export function dedupeSelected(parcels: Parcel[]): Parcel[] {
 
 /** 결과 배열의 고유 필지 수 (공익직불제 ↔ 대표필지 겹침을 1건으로 계산) */
 export function countUniqueSelected(parcels: Parcel[]): number {
-  // 식별 불가능한 필지는 서로 다른 것으로 본다. 한 덩어리로 세면 결과 수가
-  // 실제보다 적게 나와 목표 미달로 오판된다.
-  const keys = new Set<string>();
-  let unidentified = 0;
-  for (const p of parcels) {
-    const key = matchKey(p);
-    if (key === null) unidentified++;
-    else keys.add(key);
-  }
-  return keys.size + unidentified;
+  // 결과 집계다 — 이 행들은 실제로 엑셀에 나가므로 식별 불가능해도 각각 1건이다.
+  // (달성 가능성 판정은 반대로 'exclude'를 쓴다 — `parcelStore.canMeetTarget`)
+  return countUniqueParcels(parcels, 'each');
 }
 
 const DEFAULT_CONFIG: ExtractionConfig = {
@@ -427,10 +420,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
 
       if (excludedRepReasons.length > 0) {
         // 이미 선택된 키 모음
-        const allUsedKeys = new Set([
-          ...taggedPublic.map(matchKey),
-          ...repDirect.map(matchKey),
-        ]);
+        // `Set<string | null>`로 두면 `has(null)`이 true가 되어, 식별 불가능한 필지가
+        // 하나만 들어가도 마스터의 다른 식별 불가능 필지가 **전부** "이미 선택됨"으로
+        // 판정돼 대체 후보에서 빠진다. 타입 검사는 이것을 잡지 못한다.
+        const allUsedKeys = new Set(
+          [...taggedPublic, ...repDirect]
+            .map(matchKey)
+            .filter((k): k is string => k !== null),
+        );
 
         // 마스터에서 대체 후보 (적격 + 미선택)
         const masterCandidates = allParcels.filter(p => {
@@ -438,7 +435,9 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           if (config.excludedRis.includes(p.ri)) return false;
           const area = getParcelArea(p);
           if (area !== null && area < MIN_AREA) return false;
-          return !allUsedKeys.has(matchKey(p));
+          // 키가 없는 후보는 "이미 쓰였는지" 알 수 없다 — 배제하지 않는다
+          const pk = matchKey(p);
+          return pk === null || !allUsedKeys.has(pk);
         });
 
         // 대표필지 중심 근처 우선 정렬
@@ -474,8 +473,12 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
           // 루프 전에 만든 집합만 보면 그 쌍이 둘 다 담기고 뒤의 dedupe가 하나로 접는다
           // — 대체 복사 200건이 조용히 100건이 됐고 "대체 부족" 경고도 안 떴다.
           const k = matchKey(p);
-          if (allUsedKeys.has(k)) continue;
-          allUsedKeys.add(k);
+          // 키가 없으면 "이미 담았는지" 알 수 없다. 후보에서 배제하지 않았으므로
+          // 여기서도 담되, 집합에는 넣지 않는다(넣으면 null 하나가 나머지를 다 막는다).
+          if (k !== null) {
+            if (allUsedKeys.has(k)) continue;
+            allUsedKeys.add(k);
+          }
           repSupplements.push({
             ...p,
             parcelCategory: 'representative' as const,
@@ -636,6 +639,14 @@ export const useExtractionStore = create<ExtractionStore>((set, get) => ({
   addParcel: (parcel) =>
     set((state) => {
       if (!state.result) return state;
+      // 이미 들어 있으면 아무 것도 하지 않는다 — `removeParcel`과 대칭이다.
+      //
+      // **주의**: 이 검사는 `{...parcel, isSelected: true}` 사본을 저장하기 전에
+      // 원본으로 판정한다. 키가 있는 필지는 사본도 같은 키를 가지므로 정확하지만,
+      // **식별 불가능한 필지는 참조가 끊겨 매번 새로 담긴다.**
+      // 그래서 `ResultTable`이 그런 필지의 선택 자체를 막는다 —
+      // 지오코딩도 안 되고 현장 지시서로도 쓸 수 없는 필지라 그 편이 옳다.
+      if (state.result.selectedParcels.some(sameParcelPredicate(parcel))) return state;
       return {
         result: {
           ...state.result,
