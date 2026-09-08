@@ -56,7 +56,7 @@ const farmerKey = parcelFarmerKey;
  * 정규 키로 비교하되, 키가 없는(식별 불가능한) 필지는 **참조로만** 판정한다 —
  * 그것이 유일하게 안전하다.
  */
-export function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
+function sameParcelPredicate(target: Parcel): (p: Parcel) => boolean {
   const key = matchKey(target);
   if (key === null) return (p) => p === target;
   return (p) => matchKey(p) === key;

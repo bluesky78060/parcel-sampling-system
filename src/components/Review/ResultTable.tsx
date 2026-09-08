@@ -46,7 +46,19 @@ export function ResultTable({
     return set;
   }, [selectedParcels]);
 
-
+  /**
+   * 식별 불가능한(키가 `null`) 선정 필지의 참조 집합.
+   *
+   * `ReviewPage.tableParcels`는 `[...selectedParcels, ...unselected]`이므로 선정분 행의
+   * `row.original`은 스토어에 담긴 **바로 그 객체**다. 참조가 살아 있어 판정할 수 있다.
+   *
+   * (`addParcel`로 사용자가 새로 넣는 경로는 사본을 만들어 참조가 끊긴다. 그래서
+   * 아래에서 **추가만** 막는다 — 제거는 막지 않는다.)
+   */
+  const selectedRefs = useMemo(
+    () => new Set(selectedParcels.filter((p) => parcelMatchKey(p) === null)),
+    [selectedParcels],
+  );
 
   const columns = useMemo<ColumnDef<Parcel>[]>(
     () => [
@@ -55,10 +67,9 @@ export function ResultTable({
         header: () => <span className="text-xs text-gray-500">선택</span>,
         cell: ({ row }) => {
           const parcel = row.original;
-          // 키가 없으면 참조로 판정한다 — `removeParcel`이 쓰는 규칙과 같다.
-          // `false`로 두면 선택 표시가 영영 켜지지 않아 클릭할 때마다 중복 추가된다.
+          // 키가 없으면 참조로 판정한다 — 선정분은 스토어의 객체가 그대로 넘어온다.
           const key = parcelMatchKey(parcel);
-          const isSelected = key !== null && selectedSet.has(key);
+          const isSelected = key !== null ? selectedSet.has(key) : selectedRefs.has(parcel);
           const isRep = isRepresentative(parcel);
 
           if (isRep) {
@@ -73,13 +84,18 @@ export function ResultTable({
 
           // PNU도 주소도 지번도 없는 필지는 **선택할 수 없다.**
           //
-          // `addParcel`이 `{...parcel, isSelected: true}` 사본을 저장하므로 참조가
-          // 끊기고, 키가 없으면 그 사본을 다시 찾을 방법이 없다. 그대로 두면
-          // 선택 표시가 켜지지 않아 클릭할 때마다 중복이 쌓이고 UI로는 뺄 수 없다.
+          // 식별 불가능한 필지는 **추가만** 막는다.
           //
-          // 애초에 이런 필지는 지오코딩도 안 되고 현장 지시서로도 쓸 수 없다.
-          // 700에 넣는 것 자체가 문제이므로, 원본을 고쳐 오도록 안내한다.
-          if (key === null) {
+          // 추가: `addParcel`이 `{...parcel, isSelected: true}` 사본을 저장하므로 참조가
+          // 끊기고, 키가 없으면 그 사본을 다시 찾을 방법이 없다. 클릭할 때마다 중복이
+          // 쌓이고 UI로는 뺄 수 없다. 애초에 이런 필지는 지오코딩도 안 되고 현장
+          // 지시서로도 쓸 수 없으니, 원본을 고쳐 오도록 안내한다.
+          //
+          // 제거: **막으면 안 된다.** 추출 알고리즘은 이런 필지를 700에 넣는다
+          // (적격 판정이 PNU·주소 없이도 통과하고, 대체 보충도 키 없는 후보를 담는다).
+          // 그것을 사람이 뺄 수 없으면 잘못 들어간 필지가 그대로 제출 파일에 나간다.
+          // 선정분 행은 스토어의 객체가 그대로 넘어와 참조로 정확히 지울 수 있다.
+          if (key === null && !isSelected) {
             return (
               <span
                 className="w-5 h-5 rounded border border-gray-200 bg-gray-100 flex items-center justify-center text-gray-400 cursor-not-allowed"
@@ -210,7 +226,7 @@ export function ResultTable({
         size: 100,
       },
     ],
-    [selectedSet, onAddParcel, onRemoveParcel]
+    [selectedSet, selectedRefs, onAddParcel, onRemoveParcel]
   );
 
   const table = useReactTable({
@@ -317,7 +333,7 @@ export function ResultTable({
               if (!row) return null;
               const parcel = row.original;
               const key = parcelMatchKey(parcel);
-              const isSelected = key !== null && selectedSet.has(key);
+              const isSelected = key !== null ? selectedSet.has(key) : selectedRefs.has(parcel);
               const isRep = isRepresentative(parcel);
 
               return (
