@@ -105,6 +105,23 @@ describe('applyGeocodedCoords', () => {
     expect(out[0].coords).toEqual(AT(36.1));
   });
 
+  /**
+   * **`coords`만 가져온다.** 지오코딩에 보낸 배열과 반영 대상 배열은 다른 스냅샷일 수
+   * 있어(`AnalyzePage`가 `await` 전후로 다른 시점을 본다) 다른 필드가 갈릴 수 있다.
+   * 통째로 `{ ...g }`를 돌려주면 그 차이가 조용히 덮인다 — 되돌려도 8건이 다 통과했다.
+   */
+  it('coords 외의 필드는 대상 쪽 값을 유지한다', () => {
+    const p = makeParcel({ pnu: 'MINE', address: '내 주소', coords: null });
+    const out = applyGeocodedCoords(
+      [p],
+      [{ ...p, pnu: '남의것', address: '남의 주소', farmerName: '남의농부', coords: AT(36.1) }],
+    );
+    expect(out[0].coords).toEqual(AT(36.1));
+    expect(out[0].pnu).toBe('MINE');
+    expect(out[0].address).toBe('내 주소');
+    expect(out[0].farmerName).toBe(p.farmerName);
+  });
+
   it('빈 배열을 넣어도 터지지 않는다', () => {
     expect(applyGeocodedCoords([], [])).toEqual([]);
     const p = makeParcel({ pnu: 'A', coords: AT(36.1) });
