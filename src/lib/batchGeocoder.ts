@@ -177,7 +177,10 @@ export async function batchGeocode(
     console.info(`[batchGeocoder] IndexedDB에서 ${warmupCount}건 캐시 로드됨`);
   }
 
-  const results: Parcel[] = parcels.map((p) => ({ ...p }));
+  // `coords`를 `null`로 정규화한다. 키 없음 조기 반환(위)이 이미 같은 규칙을 쓰는데
+  // 여기만 원본을 그대로 두면, 서비스 실패로 기입을 건너뛴 필지가 `undefined`로 남아
+  // 같은 모듈이 두 가지 부재 표현을 내보낸다.
+  const results: Parcel[] = parcels.map((p) => ({ ...p, coords: p.coords ?? null }));
 
   // 좌표가 없는 필지만 처리 대상 (force=true이면 전체 재변환)
   const needsGeocode: number[] = [];
@@ -521,9 +524,14 @@ export async function batchGeocode(
         //   notFound              서버가 답했고 그 주소에 좌표가 없다  → 지운다
         //   quota/unreachable/auth  서버 사정. 데이터에 대해 무언(無言) → 지킨다
         //
-        // 실측(수정 전, 좌표를 다 가진 200건): 서버 무응답 200→150,
-        // notFound 폭주 200→0. 후자는 `serviceDown=false`라 **화면이 "변환 완료"라고
-        // 말하면서** 좌표가 전멸했다. 아래 배타 체인이 쓰는 판정을 그대로 쓴다.
+        // 실측(수정 전, 좌표를 다 가진 200건): 도중 사망 200→135, 한도 초과 200→163,
+        // 인증 거부 200→150. 수정 후 전부 200. 아래 배타 체인이 쓰는 판정을 그대로 쓴다 —
+        // 다시 유도하면 두 곳이 갈라진다.
+        //
+        // ⚠️ **`notFound`가 전부 진짜 데이터 문제인 것은 아니다.** `kakaoGeocoder`가
+        // 분류하지 못한 VWORLD `ERROR` 응답은 `responded = true; continue`로 빠져
+        // 조용히 `null`이 되고, 여기서 "좌표 없음"으로 집계돼 좌표가 지워진다.
+        // `res.error.code`가 손에 있으니 구분할 수 있다 — PROJ1-1-45로 분리했다.
         const serviceFailure = coords === null && (rateLimited || authRejected || unreachable);
         if (!serviceFailure) {
           for (const idx of entry.allIndices) {

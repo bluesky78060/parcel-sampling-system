@@ -27,7 +27,7 @@ import type { Parcel } from '../types';
  *
  * **좌표가 `null`이어도 그대로 반영한다.** `g?.coords ? ... : p`로 바꾸면 안 된다 —
  * 좌표 재변환(`force=true`)은 캐시를 비우고 전체를 다시 돌리는데, 그때 실패하면
- * `batchGeocoder`가 `coords: null`을 넣는다(`batchGeocoder.ts:512`). 실패가
+ * `batchGeocoder`가 `coords: null`을 넣는다(`batchGeocode`의 좌표 기입 지점). 실패가
  * `notFound`(서버가 답했고 좌표가 없다)면 **낡은 좌표가 지워지는 것이 맞다.**
  * 여기서 막으면 재변환이 초기화를 못 한다.
  *

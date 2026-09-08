@@ -150,6 +150,109 @@ describe('batchGeocode — 재변환 실패 시 좌표 보존', () => {
       throw new GeocodeServiceError('서버 무응답', 'unreachable');
     };
     const { parcels: out } = await run(parcels, true);
-    expect(out[0].coords ?? null).toBeNull();
+    expect(out[0].coords).toBeNull();
+  });
+
+  /**
+   * `coords`가 없는 필지도 **`null`로 정규화해서** 내보낸다. 같은 모듈이 `null`과
+   * `undefined` 두 가지 부재 표현을 내보내면 소비자가 둘 다 다뤄야 한다.
+   */
+  it('coords 키가 아예 없던 필지도 null로 나온다', async () => {
+    const p = makeParcel({ pnu: '', parcelId: '100', address: '경상북도 봉화군 봉화읍 내성리 100' });
+    delete (p as { coords?: unknown }).coords;
+    geocodeImpl = async () => {
+      throw new GeocodeServiceError('서버 무응답', 'unreachable');
+    };
+    const { parcels: out } = await batchGeocode([p], {
+      force: true, skipHealthCheck: true, concurrency: 5, maxRetries: 0,
+    });
+    expect(out[0].coords).toBeNull();
+  });
+});
+
+/**
+ * 재시도 루프. **성공하면 앞선 시도의 실패 판정을 전부 거둔다** — 이 불변식 위에
+ * 좌표 보존 가드의 `coords === null` 항이 등가라는 판정이 서 있다(PROJ1-1-43 P5).
+ * 하네스가 전부 `maxRetries: 0`이라 루프가 두 번 도는 경우가 없었다.
+ */
+describe('batchGeocode — 재시도', () => {
+  it('첫 시도가 실패해도 재시도가 성공하면 좌표를 얻는다', async () => {
+    let calls = 0;
+    geocodeImpl = async () => {
+      if (++calls === 1) throw new GeocodeServiceError('일시 장애', 'unreachable');
+      return AT(37.0);
+    };
+    const { parcels: out, diagnostics } = await batchGeocode(withCoords(1), {
+      force: true, skipHealthCheck: true, concurrency: 1, maxRetries: 1,
+    });
+    expect(calls).toBe(2);
+    expect(out[0].coords).toEqual(AT(37.0));
+    // 성공했으므로 실패로 세면 안 된다
+    expect(diagnostics.unreachable).toBe(0);
+    expect(diagnostics.attemptedFailures).toBe(0);
+  });
+
+  /**
+   * **이것이 리셋이 진짜로 막는 것이다.** `geocodeAddress`는 "좌표 없음"을 throw가
+   * 아니라 `null`로 알리고 그 경로도 같은 자리를 지난다. 앞 시도의 실패 판정을
+   * 안 거두면 **정상 "결과 없음"이 서버 오류로 집계되고**, 좌표 보존 가드까지
+   * 타서 지워야 할 낡은 좌표가 남는다.
+   *
+   * 리셋을 지워도 15건이 전부 통과했다 — 성공(좌표 있음) 조합만 있었기 때문이다.
+   */
+  it('첫 시도가 예외이고 재시도가 좌표 없음이면 notFound로 센다', async () => {
+    let calls = 0;
+    geocodeImpl = async () => {
+      if (++calls === 1) throw new GeocodeServiceError('일시 장애', 'unreachable');
+      return null; // 서버가 답했고 이 주소에 좌표가 없다
+    };
+    const { parcels: out, diagnostics } = await batchGeocode(withCoords(1), {
+      force: true, skipHealthCheck: true, concurrency: 1, maxRetries: 1,
+    });
+    expect(calls).toBe(2);
+    expect(diagnostics.notFound).toBe(1);
+    expect(diagnostics.unreachable).toBe(0);
+    // 데이터 문제이므로 낡은 좌표를 지운다
+    expect(out[0].coords).toBeNull();
+  });
+
+  it('재시도도 실패하면 낡은 좌표를 지킨다', async () => {
+    let calls = 0;
+    geocodeImpl = async () => {
+      calls++;
+      throw new GeocodeServiceError('서버 무응답', 'unreachable');
+    };
+    const { parcels: out } = await batchGeocode(withCoords(1), {
+      force: true, skipHealthCheck: true, concurrency: 1, maxRetries: 1,
+    });
+    expect(calls).toBe(2);
+    expect(out[0].coords?.lat).toBe(36.1);
+  });
+});
+
+/**
+ * 서버가 죽었다고 판단하면 남은 배치를 포기한다. **`diagnostics.serviceDown`을
+ * 단언하는 테스트가 하나도 없었다** — 조기 중단을 무력화해도 전부 통과했다.
+ */
+describe('batchGeocode — 서버 장애 판정', () => {
+  it('연속 실패가 임계치를 넘으면 serviceDown으로 중단한다', async () => {
+    geocodeImpl = async () => {
+      throw new GeocodeServiceError('서버 무응답', 'unreachable');
+    };
+    // 배치를 여러 개 만들어야 임계치(연속 2배치)에 도달한다
+    const { parcels: out, diagnostics } = await batchGeocode(withCoords(12), {
+      force: true, skipHealthCheck: true, concurrency: 2, maxRetries: 0,
+    });
+    expect(diagnostics.serviceDown).toBe(true);
+    expect(diagnostics.failureKind).toBe('unreachable');
+    expect(diagnostics.message).toBeTruthy();
+    // 중단해도 이미 확보한 좌표는 지킨다
+    expect(out.every((p) => p.coords?.lat === 36.1)).toBe(true);
+  });
+
+  it('성공하면 serviceDown이 아니다', async () => {
+    const { diagnostics } = await run(withCoords(3), true);
+    expect(diagnostics.serviceDown).toBe(false);
+    expect(diagnostics.failureKind).toBeNull();
   });
 });
