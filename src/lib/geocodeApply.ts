@@ -25,9 +25,17 @@ import type { Parcel } from '../types';
  * `rowUid`는 파싱 시점에 행마다 부여되고 `batchGeocoder`의 모든 스프레드를 통과하므로
  * 충돌이 원천적으로 없다.
  *
+ * **좌표가 `null`이어도 그대로 반영한다.** `g?.coords ? ... : p`로 바꾸면 안 된다 —
+ * 좌표 재변환(`force=true`)은 캐시를 비우고 전체를 다시 돌리는데, 그때 실패하면
+ * `batchGeocoder`가 `coords: null`을 넣는다(`batchGeocoder.ts:516`). 사용자가 "다시
+ * 변환"을 누른 것이므로 **낡은 좌표가 지워지는 것이 맞다.** 여기서 막으면 재변환이
+ * 초기화를 못 한다.
+ *
+ * 예전에 좌표가 부당하게 지워지던 것은 이 삼항 때문이 아니라 **키 충돌** 때문이었다 —
+ * 실패한 필지가 무관한 필지의 좌표를 덮어썼다. 키를 고치면 그 경로가 사라진다.
+ *
  * @param targets  좌표를 받을 필지들. 지오코딩에 보내지 않은 필지가 섞여 있어도 된다
- * @param geocoded `startGeocoding`이 돌려준 배열. 실패분도 포함되어 있고,
- *                 실패분의 `coords`는 **원래 값 그대로**다(지오코더가 지우지 않는다)
+ * @param geocoded `startGeocoding`이 돌려준 배열. 실패분도 포함된다
  */
 export function applyGeocodedCoords(
   targets: readonly Parcel[],

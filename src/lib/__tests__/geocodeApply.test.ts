@@ -84,6 +84,20 @@ describe('applyGeocodedCoords', () => {
     expect(out.find((p) => p.pnu === 'PNU_FAIL')!.coords).toBeNull();
   });
 
+  /**
+   * 좌표 재변환(`force=true`)은 캐시를 비우고 전체를 다시 돌린다. 그때 실패하면
+   * `batchGeocoder`가 `coords: null`을 넣는데(`batchGeocoder.ts:516`), 사용자가
+   * "다시 변환"을 누른 것이므로 **낡은 좌표가 지워지는 것이 맞다.**
+   *
+   * `g?.coords ? ... : p`로 바꾸면 재변환이 초기화를 못 한다. 좌표가 부당하게
+   * 지워지던 것은 이 삼항이 아니라 키 충돌 탓이었다.
+   */
+  it('재변환이 실패한 필지의 낡은 좌표를 지운다', () => {
+    const p = makeParcel({ pnu: 'A', coords: AT(36.1) });
+    const out = applyGeocodedCoords([p], [{ ...p, coords: null }]);
+    expect(out[0].coords).toBeNull();
+  });
+
   it('같은 행을 두 번 넣어도 그 행의 좌표만 쓴다', () => {
     const p = makeParcel({ pnu: 'A', coords: null });
     const other = makeParcel({ pnu: 'B', coords: AT(99) });
