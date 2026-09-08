@@ -809,3 +809,231 @@ describe('공익 추출이 뽑은 대표필지는 번호가 없어도 공익직�
     expect(isRepresentative(row)).toBe(true);
   });
 });
+
+/**
+ * PROJ1-1-40. `parcelFarmerKey`가 `parcelId`가 비어도 키(`F1_A리_`)를 돌려줘서
+ * **한 농가가 같은 리에 가진 지번 미상 필지들이 전부 같은 필지로 취급됐다.**
+ *
+ * 결과: 대표필지 행이 결과에서 사라지고, 마스터 행이 `'both'`로 태깅되면서
+ * **무관한 마스터의 PNU가 대표필지에 보강되어 제출 파일로 나갔다.**
+ *
+ * 결함이 두 곳이었다. `parcelFarmerKey`와, `masterByFarmerKey`가 빗나갔을 때 내려가는
+ * 인라인 폴백(`p.parcelId === rep.parcelId`)이다. 후자는 템플릿 문자열이 아니라
+ * `===` 비교라 `grep`으로 안 잡힌다 — PROJ1-1-37에서 마커 상세 패널이 같은 이유로
+ * 살아남았다.
+ */
+describe('지번이 빈 필지가 한 농가 한 리에서 뭉치지 않는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  const run = (master: Parcel[], reps: Parcel[]) => {
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction(master, reps);
+    return useExtractionStore.getState().result!;
+  };
+
+  const keyless = (over: Partial<Parcel> = {}) =>
+    makeParcel({ farmerId: 'F1', ri: 'A리', parcelId: '', address: '', area: 1000, ...over });
+
+  it('지번이 빈 대표필지가 마스터에 접혀 사라지지 않는다', () => {
+    const master = keyless({ pnu: 'PNU_M' });
+    const rep = keyless({ pnu: '' });
+    const result = run([master], [rep]);
+    expect(result.selectedParcels.map((p) => p.rowUid)).toContain(rep.rowUid);
+    expect(result.selectedParcels.filter(isRepresentative)).toHaveLength(1);
+  });
+
+  /**
+   * 사라지는 것보다 이쪽이 더 나쁘다 — **틀린 값이 조용히 제출 파일에 실린다.**
+   * 경영체 정보는 같은 농가이므로 보충해도 되지만, PNU·좌표는 필지 식별 정보라
+   * 다른 필지의 것을 복사하면 안 된다.
+   */
+  it('무관한 마스터의 PNU가 대표필지에 실리지 않는다', () => {
+    const master = keyless({ pnu: 'PNU_M' });
+    const rep = keyless({ pnu: '' });
+    const result = run([master], [rep]);
+    const repRow = result.selectedParcels.find((p) => p.rowUid === rep.rowUid);
+    expect(repRow).toBeDefined();
+    expect(repRow!.pnu).toBe('');
+  });
+
+  /**
+   * `masterByFarmerKey`가 빗나갔을 때 내려가는 인라인 폴백도 같은 함정을 갖고 있었다.
+   * 마스터에 경영체번호가 없으면 `parcelFarmerKey`가 애초에 `null`이라 맵에 안 들어가고,
+   * 폴백만 남는다 — 거기서 `'' === ''`로 매칭됐다.
+   */
+  it('인라인 폴백도 지번이 비면 매칭하지 않는다', () => {
+    const master = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '',
+      address: '경상북도 봉화군 봉화읍 A리',
+      pnu: 'PNU_M',
+      area: 1000,
+    });
+    const rep = keyless({ pnu: '' });
+    const result = run([master], [rep]);
+    const repRow = result.selectedParcels.find((p) => p.rowUid === rep.rowUid);
+    expect(repRow).toBeDefined();
+    expect(repRow!.pnu).toBe('');
+  });
+
+  /** 지번이 있으면 농가 폴백은 그대로 동작해야 한다 — 폴백을 없앤 것이 아니다. */
+  it('지번이 있으면 농가 폴백이 그대로 동작한다', () => {
+    const master = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '100',
+      pnu: 'PNU_MASTER',
+      area: 1000,
+    });
+    // PNU 표기가 달라 matchKey로는 안 걸리지만 농가+리+지번으로 같은 필지다
+    const rep = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '100',
+      pnu: 'PNU_REP_DIFFERENT',
+      area: 1000,
+    });
+    const result = run([master], [rep]);
+    // 태깅만 되어야 한다 — 행이 새로 생기면 폴백이 끊긴 것이다
+    expect(result.selectedParcels).toHaveLength(1);
+    expect(isRepresentative(result.selectedParcels[0])).toBe(true);
+  });
+});
+
+/**
+ * PROJ1-1-40 리뷰가 찾은 **무보호 가드 3건.** 셋 다 주석에는 이유가 적혀 있는데
+ * 되돌려도 307건이 전부 통과했다 — 주석만 있는 보호는 리팩터 한 번이면 사라진다.
+ *
+ * 전부 대표필지 보충 매칭(`enrichedEligibleRep`) 경로에 있고, 이 경로는 PROJ1-1-40
+ * 이후 **더 자주 탄다**(지번 없는 대표필지가 `sameParcel`에 안 걸려 내려온다).
+ */
+describe('대표필지 보충 매칭 — 무관한 필지의 정보가 새지 않는다', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  const run = (master: Parcel[], reps: Parcel[]) => {
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction(master, reps);
+    return useExtractionStore.getState().result!;
+  };
+
+  /**
+   * 인라인 폴백의 `sameRi`. 없으면 **다른 리의 같은 지번이 매칭되고 그 PNU가
+   * 대표필지 행에 기입되어 제출 파일로 나간다** — 코드 주석이 그렇게 적어 두었다.
+   * `parcelFarmerKey`는 `ri`를 키에 넣어 이미 걸러지므로, 폴백에서만 드러난다.
+   */
+  it('다른 리의 같은 지번이 대표필지에 매칭되지 않는다', () => {
+    const master = makeParcel({
+      farmerId: 'F1',
+      ri: 'B리',
+      parcelId: '100',
+      address: '경상북도 봉화군 법전면 B리 100',
+      pnu: 'PNU_OTHER_RI',
+      area: 1000,
+    });
+    // 같은 농가·같은 지번이지만 **다른 리**다. 서로 다른 필지다.
+    const rep = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '100',
+      address: '경상북도 봉화군 봉화읍 A리 100',
+      pnu: '',
+      area: 1000,
+    });
+    const result = run([master], [rep]);
+    const repRow = result.selectedParcels.find((p) => p.rowUid === rep.rowUid);
+    expect(repRow).toBeDefined();
+    expect(repRow!.pnu).toBe('');
+  });
+
+  /**
+   * 인라인 폴백의 `rep.farmerId`. 없으면 `'' === ''`가 참이 되어 **농가 미상 대표필지가
+   * 농가 미상 마스터와 매칭된다.** `sameRi`는 마지막 토큰만 보므로 시군구가 달라도
+   * 리 이름만 같으면 통과한다.
+   */
+  it('농가 미상끼리는 지번이 같아도 매칭하지 않는다', () => {
+    const master = makeParcel({
+      farmerId: '',
+      ri: '내성리',
+      parcelId: '100',
+      address: '경상북도 안동시 도산면 내성리 100',
+      pnu: 'PNU_ANDONG',
+      area: 1000,
+    });
+    const rep = makeParcel({
+      farmerId: '',
+      ri: '내성리',
+      parcelId: '100',
+      address: '경상북도 봉화군 봉화읍 내성리 100',
+      pnu: '',
+      area: 1000,
+    });
+    const result = run([master], [rep]);
+    const repRow = result.selectedParcels.find((p) => p.rowUid === rep.rowUid);
+    expect(repRow).toBeDefined();
+    expect(repRow!.pnu).toBe('');
+  });
+
+  /**
+   * `sameFarmer`의 `rep.farmerId`. 없으면 농가 미상 대표필지가 **첫 번째 농가 미상
+   * 마스터의 경영체명·주소를 물려받는다** — 무관한 농부 이름이 제출 파일의 대표필지
+   * 행에 실린다.
+   */
+  it('농가 미상 대표필지가 무관한 농부 이름을 물려받지 않는다', () => {
+    const master = makeParcel({
+      farmerId: '',
+      farmerName: '남의농부',
+      farmerAddress: '경상북도 안동시 어딘가',
+      ri: 'A리',
+      parcelId: '900',
+      pnu: 'PNU_M',
+      area: 1000,
+    });
+    const rep = makeParcel({
+      farmerId: '',
+      farmerName: '',
+      farmerAddress: '',
+      ri: 'A리',
+      parcelId: '100',
+      pnu: 'PNU_R',
+      area: 1000,
+    });
+    const result = run([master], [rep]);
+    const repRow = result.selectedParcels.find((p) => p.rowUid === rep.rowUid);
+    expect(repRow).toBeDefined();
+    expect(repRow!.farmerName).toBe('');
+    expect(repRow!.farmerAddress).toBe('');
+  });
+});
