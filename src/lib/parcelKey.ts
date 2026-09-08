@@ -40,6 +40,29 @@ export function parcelMatchKey(p: Parcel): string | null {
  * 리 표기는 파일마다 다를 수 있어("봉화읍 내성리" / "내성리") 키는 원문 그대로 쓰고,
  * 폴백에서 마지막 토큰으로 느슨하게 비교한다.
  */
+/**
+ * 키 집합을 만드는 **유일한 방법.**
+ *
+ * `new Set(parcels.map(key))`는 `Set<string | null>`이 되고 `has(null)`이 `true`가 된다.
+ * 그러면 식별 불가능한 필지 **하나가 나머지 전부를** "이미 있음"으로 만든다. 이 결함이
+ * `extractionStore`에서만 세 번 났다(PROJ1-1-37 `allUsedKeys`, PROJ1-1-39 `selectedKeySet`).
+ *
+ * 매번 `.filter((k): k is string => k !== null)`을 손으로 붙이면 **한 곳을 빠뜨린다** —
+ * 실제로 네 곳 중 하나가 빠져 있었고 형제 줄이 바로 옆에서 멀쩡히 거르고 있었다.
+ * `new Set<string>(...)` 타입 명시도 완전하지 않다. `as string[]` 한 번이면 뚫린다.
+ *
+ * 그래서 필터를 **함수의 정의 자체**로 만든다. 지울 필터가 호출부에 없으면 빠뜨릴 수 없고,
+ * 이 함수 하나만 테스트하면 네 곳이 함께 지켜진다.
+ */
+export function keySetOf(parcels: readonly Parcel[], key: (p: Parcel) => string | null): Set<string> {
+  const out = new Set<string>();
+  for (const p of parcels) {
+    const k = key(p);
+    if (k !== null) out.add(k);
+  }
+  return out;
+}
+
 export function parcelFarmerKey(p: Parcel): string | null {
   return p.farmerId ? `${p.farmerId}_${p.ri}_${p.parcelId}` : null;
 }

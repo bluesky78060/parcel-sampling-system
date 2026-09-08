@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { farmerGroupKey, hasFarmerId, parcelFarmerKey, parcelMatchKey } from '../parcelKey';
+import {
+  farmerGroupKey,
+  hasFarmerId,
+  keySetOf,
+  parcelFarmerKey,
+  parcelMatchKey,
+} from '../parcelKey';
 import {
   categoryLabel,
   isPublicPayment,
@@ -192,5 +198,48 @@ describe('categoryLabel', () => {
     expect(categoryLabel(makeParcel({ parcelCategory: 'both' }))).toBe('공익직불제·대표필지');
     expect(categoryLabel(makeParcel({ parcelCategory: 'representative' }))).toBe('대표필지');
     expect(categoryLabel(makeParcel({ parcelCategory: 'public-payment' }))).toBe('공익직불제');
+  });
+});
+
+/**
+ * `keySetOf` — 키 집합을 만드는 유일한 방법.
+ *
+ * 이 필터가 호출부에 흩어져 있을 때 `extractionStore`에서만 세 번 결함이 났고
+ * (PROJ1-1-37 `allUsedKeys`, PROJ1-1-39 `selectedKeySet`), 그중 하나는 형제 줄이
+ * 바로 옆에서 멀쩡히 거르는데도 빠져 있었다. 여기 한 곳만 지키면 네 곳이 함께 지켜진다.
+ */
+describe('keySetOf', () => {
+  it('키를 모은다', () => {
+    const set = keySetOf([makeParcel({ pnu: 'A' }), makeParcel({ pnu: 'B' })], parcelMatchKey);
+    expect([...set].sort()).toEqual(['A', 'B']);
+  });
+
+  /**
+   * **이것이 이 함수가 존재하는 이유다.** `new Set([null]).has(null)`은 `true`이므로,
+   * 식별 불가능한 필지 하나가 나머지 전부를 "이미 있음"으로 만든다.
+   */
+  it('식별 불가능한 필지는 집합에 넣지 않는다', () => {
+    const unidentified = makeParcel({ pnu: '', address: '', parcelId: '' });
+    const set = keySetOf([makeParcel({ pnu: 'A' }), unidentified], parcelMatchKey);
+    expect(set.size).toBe(1);
+    expect(set.has(parcelMatchKey(unidentified) as unknown as string)).toBe(false);
+  });
+
+  it('전부 식별 불가능하면 빈 집합이다', () => {
+    const set = keySetOf(
+      [makeParcel({ pnu: '', address: '', parcelId: '' })],
+      parcelMatchKey,
+    );
+    expect(set.size).toBe(0);
+  });
+
+  it('경영체번호 키에도 같은 규칙이 적용된다', () => {
+    const noFarmer = makeParcel({ farmerId: '' });
+    const set = keySetOf([noFarmer, makeParcel({ farmerId: 'F1' })], parcelFarmerKey);
+    expect(set.size).toBe(1);
+  });
+
+  it('중복 키는 한 번만 담는다', () => {
+    expect(keySetOf([makeParcel({ pnu: 'A' }), makeParcel({ pnu: 'A' })], parcelMatchKey).size).toBe(1);
   });
 });
