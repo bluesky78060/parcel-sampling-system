@@ -537,8 +537,10 @@ describe('대체 보충 — 담은 것을 바로 반영한다', () => {
       config: {
         ...useExtractionStore.getState().config,
         totalTarget: 10,
-        publicPaymentTarget: 0, // 공익 추출을 건너뛰어 보충 루프만 본다
-        perRiTarget: 0,
+        // `publicPaymentTarget: 0`이면 `extractParcels`가 아예 호출되지 않는다
+        // (extractionStore의 `publicTarget > 0` 분기). 보충 루프만 격리해 본다.
+        // 그래서 `perRiTarget`은 여기서 아무 의미가 없다 — 적지 않는다.
+        publicPaymentTarget: 0,
         maxPerFarmer: 10,
         randomSeed: 42,
         enableLandCategoryFilter: false,
@@ -552,5 +554,107 @@ describe('대체 보충 — 담은 것을 바로 반영한다', () => {
     // 그러면 부적격 2건을 대체한다고 해 놓고 실제로는 1건만 나간다
     expect(rows.filter((p) => p.pnu === 'PNU_A')).toHaveLength(1);
     expect(rows.map((p) => p.pnu).sort()).toEqual(['PNU_A', 'PNU_B']);
+  });
+});
+
+/**
+ * PROJ1-1-39 리뷰가 실측으로 찾은 무보호 가드 둘. 되돌려도 278건이 전부 통과했다.
+ */
+describe('무보호였던 가드', () => {
+  beforeEach(() => {
+    useExtractionStore.setState({
+      result: null,
+      config: { ...useExtractionStore.getState().config },
+    });
+  });
+
+  /**
+   * `repNotInPublic`의 `farmerKey` 절. PNU가 서로 달라 `matchKey`로는 안 걸리지만
+   * 같은 농가·리·지번이면 같은 필지로 본다 — 대표필지 파일과 마스터 파일의 PNU 표기가
+   * 다를 수 있어서 둔 폴백이다. 이것이 없으면 **같은 필지가 공익 행과 대표 행으로
+   * 두 번 실린다.**
+   */
+  it('PNU가 달라도 농가·리·지번이 같으면 대표필지를 두 번 싣지 않는다', () => {
+    const master = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '100',
+      pnu: 'PNU_MASTER',
+      area: 1000,
+    });
+    // 같은 필지인데 대표필지 파일에는 PNU가 다르게 적혀 있다
+    const rep = makeParcel({
+      farmerId: 'F1',
+      ri: 'A리',
+      parcelId: '100',
+      pnu: 'PNU_REP_DIFFERENT',
+      area: 1000,
+    });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 10,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction([master], [rep]);
+
+    const rows = useExtractionStore.getState().result!.selectedParcels;
+    // 태깅만 되어야 한다 — 행이 새로 생기면 안 된다
+    expect(rows).toHaveLength(1);
+    expect(isRepresentative(rows[0])).toBe(true);
+  });
+
+  /**
+   * `exemptKeys`는 **`repDirect`(공익에 안 뽑혀 따로 추가된 대표필지)만** 면제한다.
+   * `taggedPublic`은 사용자 지정이긴 하나 **농가별 슬라이스를 이미 거쳐** 뽑힌 것이라
+   * 면제할 이유가 없다. 거기까지 면제하면 한 농가에 몰려도 상한 경고가 안 뜬다.
+   */
+  it('공익에서 뽑힌 대표필지는 농가 상한 면제 대상이 아니다', () => {
+    // 한 농가에 여러 필지. 상한이 1이라 공익 추출은 1건만 뽑는다.
+    const master = Array.from({ length: 4 }, (_, i) =>
+      makeParcel({ farmerId: 'F_HEAVY', ri: 'A리', parcelId: `${100 + i}`, area: 1000 }),
+    );
+    // 마스터의 100번과 같은 필지 → 공익 추출에 우선 선택되어 taggedPublic이 된다
+    const repInPublic = makeParcel({
+      farmerId: 'F_HEAVY',
+      ri: 'A리',
+      parcelId: '100',
+      area: 1000,
+    });
+    // 부적격 대표필지 → 대체 보충이 F_HEAVY의 다른 필지를 끌어와 상한을 넘긴다
+    const badRep = makeParcel({
+      farmerId: 'F_OTHER',
+      ri: 'A리',
+      parcelId: '900',
+      isEligible: false,
+      area: 1000,
+    });
+
+    useExtractionStore.setState({
+      config: {
+        ...useExtractionStore.getState().config,
+        totalTarget: 10,
+        publicPaymentTarget: 10,
+        perRiTarget: 5,
+        maxPerFarmer: 1,
+        randomSeed: 42,
+        enableLandCategoryFilter: false,
+        underfillPolicy: 'skip',
+      },
+    });
+    useExtractionStore.getState().runExtraction(master, [repInPublic, badRep]);
+
+    const v = useExtractionStore.getState().result!.validation;
+    const overLimit = [...v.warnings, ...v.errors].filter(
+      (m) => m.code === 'FARMER_OVER_LIMIT',
+    );
+    expect(overLimit.length).toBeGreaterThan(0);
   });
 });
