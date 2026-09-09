@@ -157,7 +157,11 @@ export function checkExportFormat(root = repoRoot) {
 
     // (3) 금지 API — import 여부와 무관하게 본다
     for (const api of FORBIDDEN_APIS) {
-      const re = new RegExp(`\\b${api}\\s*\\(`, 'g');
+      // 호출(`(`)을 요구하지 않는다. `const toCsv = XLSX.utils.sheet_to_csv`처럼
+      // **별칭으로 받아 두고 나중에 부르면** 호출 형태 검사를 빠져나간다(실측 확인).
+      // 이름이 등장하는 것 자체를 금지하는 편이 좁게 놓치는 것보다 낫다 —
+      // 주석은 위에서 지웠으므로 규칙을 설명하는 문장은 걸리지 않는다.
+      const re = new RegExp(`\\b${api}\\b`, 'g');
       let m;
       while ((m = re.exec(code)) !== null) {
         violations.push({
