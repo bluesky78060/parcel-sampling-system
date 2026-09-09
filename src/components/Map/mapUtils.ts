@@ -46,17 +46,6 @@ export function createStarIcon(color: string) {
 // 재수출하지 않는다.
 
 // Ray casting 알고리즘으로 점이 폴리곤 안에 있는지 확인
-export function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
-  const [x, y] = point;
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const [xi, yi] = polygon[i];
-    const [xj, yj] = polygon[j];
-    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
-  }
-  return inside;
-}
 
 // VWORLD Data API URL (폴리곤 가져오기용)
 // VWORLD는 CORS 헤더를 보내지 않으므로 JSONP로 호출한다. 프록시가 필요 없어

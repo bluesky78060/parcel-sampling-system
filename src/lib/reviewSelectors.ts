@@ -1,5 +1,6 @@
 import type { Parcel, ParcelCategory } from '../types';
-import { parcelMatchKey } from './parcelKey';
+import { markAsRepresentative } from './parcelCategory';
+import { keySetOf, parcelMatchKey } from './parcelKey';
 
 /**
  * 결과 검토 화면의 파생 계산.
@@ -17,20 +18,40 @@ import { parcelMatchKey } from './parcelKey';
  *
  * 키가 없는 대표필지는 마스터와 같은 필지인지 판정할 수 없으므로 **새 것으로 본다.**
  * 접으면 조용히 사라지는데, 대표필지는 반드시 조사해야 하는 고정 관측점이다.
+ *
+ * **겹치는 행에는 대표필지 성격을 실어 준다.** 마스터 행을 남기면 그 행의
+ * `parcelCategory`는 파싱 기본값 `'public-payment'`이고(`applyColumnMapping`의 기본
+ * 인자 — `AnalyzePage`는 마스터에 그 인자를 넘기지 않는다), 그러면 대표필지가
+ * `isRepresentative`에서 거짓이 되어 **지도에 초록 별이 아니라 파란 원으로 찍힌다.**
+ * 반드시 조사해야 하는 고정 관측점을 평범한 필지로 그리는 것이라 현장에 나쁜 신호다.
+ * 지도 배지의 대표 수도 겹친 만큼 적게 세어졌다(실측: 겹침 1 / 대표 3 → 배지 2).
+ *
+ * 선정 결과 경로(`buildMapSelectedParcels`)는 `categoryByKey`로 카테고리를 다시 써 줘
+ * 이 구멍이 없었다. "추출 선택만"을 끈 모드만 재기입이 없어 갈라져 있었다.
+ *
+ * `markAsRepresentative`를 쓴다 — 공익 추출분이면 `'both'`가 되어 양쪽 성격을 다
+ * 유지한다. 대표필지 시트에서만 보이게 덮어쓰면 제출 파일의 행 수가 줄어든다.
  */
 export function mergeWithRepresentatives(
   allParcels: Parcel[],
   representativeParcels: Parcel[],
 ): Parcel[] {
   if (representativeParcels.length === 0) return allParcels;
-  const existingKeys = new Set(
-    allParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
+  const repKeys = keySetOf(representativeParcels, parcelMatchKey);
+
+  const tagged = allParcels.map((p) => {
+    const key = parcelMatchKey(p);
+    if (key === null || !repKeys.has(key)) return p;
+    const cat = markAsRepresentative(p.parcelCategory);
+    return cat === p.parcelCategory ? p : { ...p, parcelCategory: cat };
+  });
+
+  const existingKeys = keySetOf(allParcels, parcelMatchKey);
   const newReps = representativeParcels.filter((p) => {
     const key = parcelMatchKey(p);
     return key === null || !existingKeys.has(key);
   });
-  return [...allParcels, ...newReps];
+  return [...tagged, ...newReps];
 }
 
 /**
@@ -117,7 +138,18 @@ export function isParcelSelected(parcel: Parcel, selectedParcels: Parcel[]): boo
 
 export interface MapLegendCounts {
   selected: number;
+  /** 지도에 실제로 찍히는 대표필지 (결과에 포함되고 좌표가 있는 것) */
   representative: number;
+  /**
+   * 업로드됐지만 결과에 없어 지도에 찍히지 않는 대표필지.
+   *
+   * 대부분은 `representativeTarget` 상한(`limitRepresentativesByRi`)에 걸린 초과분이고,
+   * 식별 정보가 없어 키를 만들 수 없는 것도 여기 들어간다. 어느 쪽이든 지도에는 없다.
+   *
+   * 예전에는 범례가 업로드 **전량**을 세고 지도 배지는 실제 마커를 세어,
+   * 나란히 놓인 두 숫자가 "대표 260" / "대표 200"으로 조용히 어긋났다.
+   */
+  representativeExcluded: number;
   unselected: number;
   /** 연도 → 그 해에 채취된 필지 수. `MapLegend`가 연도로 찾아가므로 순서에 기대지 않는다 */
   sampledByYear: Record<number, number>;
@@ -128,28 +160,49 @@ export interface MapLegendCounts {
  * 지도 범례의 분류별 개수.
  *
  * @param sampledYears 기채취 연도 두 개(최근순). 조사 연도에서 파생된 값이 들어온다.
+ * @param mapShowsAllParcels 지도가 **결과 밖 필지까지** 받는가
+ *   (`ReviewPage`의 "추출 선택만"이 꺼진 상태 = `allParcelsWithRep`을 넘기는 모드).
+ *
+ *   기본값을 두지 않는다. 이 인자가 없던 동안 범례와 지도 배지가 서로 다른 전제로
+ *   세어 두 숫자가 조용히 어긋났고, 한쪽 모드를 맞추면 다른 쪽이 틀어졌다.
+ *   호출자가 매번 "지도가 무엇을 받는가"를 밝히게 해야 그 부류가 닫힌다.
  */
 export function countMapLegend(
   allParcels: Parcel[],
   representativeParcels: Parcel[],
   selectedParcels: Parcel[],
   sampledYears: readonly [number, number],
+  mapShowsAllParcels: boolean,
 ): MapLegendCounts {
-  const selectedKeys = new Set(
-    selectedParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
-  const repKeys = new Set(
-    representativeParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
+  const selectedKeys = keySetOf(selectedParcels, parcelMatchKey);
+  const repKeys = keySetOf(representativeParcels, parcelMatchKey);
 
   let selected = 0;
   let representative = 0;
+  let representativeExcluded = 0;
   let unselected = 0;
   let noCoords = 0;
   const sampledByYear: Record<number, number> = { [sampledYears[0]]: 0, [sampledYears[1]]: 0 };
 
-  // 대표필지는 여기서 센다 (좌표 있는 것만)
+  // 대표필지는 여기서 센다. **지도에 실제로 올라간 것만** `representative`다.
+  //
+  // 어느 것이 올라가는지는 모드에 따라 다르다.
+  //
+  //   "추출 선택만" 켜짐(기본) → 지도는 `mapSelectedParcels`를 받는다.
+  //     `repCap`(리별 상한)을 넘은 초과분은 `result.selectedParcels`에 없으므로
+  //     마커도 없다. 키가 없는 대표필지도 `buildMapSelectedParcels`가 `key !== null`로
+  //     걸러 없다.
+  //   "추출 선택만" 꺼짐 → 지도는 `allParcelsWithRep`을 받는다. 초과분도 키 없는 것도
+  //     전부 올라가고, `useMarkerLayer`는 `isRepresentative(p)`면 무조건 대표로 센다.
+  //
+  // 그래서 한쪽 모드에 맞추면 다른 쪽이 틀어진다. 모드를 인자로 받아 같은 전제로 센다.
   for (const p of representativeParcels) {
+    const key = parcelMatchKey(p);
+    const onMap = mapShowsAllParcels || (key !== null && selectedKeys.has(key));
+    if (!onMap) {
+      representativeExcluded++;
+      continue;
+    }
     if (p.coords) representative++;
     else noCoords++;
   }
@@ -170,5 +223,5 @@ export function countMapLegend(
     }
   }
 
-  return { selected, representative, unselected, sampledByYear, noCoords };
+  return { selected, representative, representativeExcluded, unselected, sampledByYear, noCoords };
 }

@@ -8,6 +8,9 @@ import {
   findDistantRis,
   haversineDistance,
   meanPlusTwoSigma,
+  pointInBbox,
+  pointInPolygon,
+  ringBbox,
 } from '../spatialUtils';
 import { coordsAt, makeParcel } from './factories';
 
@@ -271,5 +274,81 @@ describe('findDistantPairs', () => {
       makeParcel({ coords: coordsAt(0.001, 0) }),
     ];
     expect(findDistantPairs(parcels, 1)).toEqual([]);
+  });
+});
+
+/**
+ * `pointInPolygon`은 `components/Map/mapUtils`에 있어 **커버리지가 0이었다** —
+ * leaflet을 top-level import 하는 파일이라 `environment: 'node'`에서 import조차
+ * 안 됐다. 순수 기하인데 거기 있을 이유가 없어 옮기면서 테스트를 붙인다.
+ *
+ * `ringBbox`·`pointInBbox`는 그 앞에 두는 선필터다. `usePolygonLayer`가 팬마다
+ * 피처×미매칭필지를 전수로 훑는데, 실측(링 20점) 피처 2,000 × 미매칭 40,809 =
+ * 81.6M회에 **3.6초**다.
+ */
+describe('pointInPolygon', () => {
+  /** 봉화읍 부근의 사각형 */
+  const square: [number, number][] = [
+    [128.0, 36.0], [129.0, 36.0], [129.0, 37.0], [128.0, 37.0],
+  ];
+
+  it('안쪽 점은 true다', () => {
+    expect(pointInPolygon([128.5, 36.5], square)).toBe(true);
+  });
+
+  it('바깥 점은 false다', () => {
+    expect(pointInPolygon([130.0, 36.5], square)).toBe(false);
+    expect(pointInPolygon([128.5, 38.0], square)).toBe(false);
+  });
+
+  /** 오목 폴리곤 — 볼록 가정이 들어가면 여기서 깨진다 */
+  it('오목한 부분의 바깥을 안쪽으로 보지 않는다', () => {
+    const cShape: [number, number][] = [
+      [0, 0], [4, 0], [4, 1], [1, 1], [1, 3], [4, 3], [4, 4], [0, 4],
+    ];
+    expect(pointInPolygon([0.5, 2], cShape)).toBe(true);   // 왼쪽 기둥 안
+    expect(pointInPolygon([3, 2], cShape)).toBe(false);    // 파인 곳
+  });
+
+  it('점이 3개 미만이면 안이 없다', () => {
+    expect(pointInPolygon([0, 0], [])).toBe(false);
+    expect(pointInPolygon([0, 0], [[0, 0], [1, 1]])).toBe(false);
+  });
+});
+
+describe('ringBbox / pointInBbox', () => {
+  const ring: [number, number][] = [[128.1, 36.2], [128.9, 36.4], [128.5, 36.9]];
+
+  it('링을 감싸는 최소 상자를 만든다', () => {
+    expect(ringBbox(ring)).toEqual({ minX: 128.1, minY: 36.2, maxX: 128.9, maxY: 36.9 });
+  });
+
+  it('상자 밖이면 false다', () => {
+    const b = ringBbox(ring);
+    expect(pointInBbox([129.5, 36.5], b)).toBe(false);
+    expect(pointInBbox([128.5, 37.5], b)).toBe(false);
+  });
+
+  /** 경계 위는 **안으로 본다.** 선필터라 넓게 잡아야 진짜 안쪽 점을 안 놓친다 */
+  it('경계 위는 안으로 본다', () => {
+    const b = ringBbox(ring);
+    expect(pointInBbox([128.1, 36.2], b)).toBe(true);
+    expect(pointInBbox([128.9, 36.9], b)).toBe(true);
+  });
+
+  /**
+   * **선필터가 정답을 바꾸면 안 된다.** bbox가 걸러낸 점은 폴리곤 안일 수 없다 —
+   * 이것이 깨지면 필지가 조용히 매칭되지 않는다.
+   */
+  it('bbox가 거른 점은 폴리곤 안일 수 없다', () => {
+    const b = ringBbox(ring);
+    for (let x = 127.5; x <= 129.5; x += 0.05) {
+      for (let y = 35.8; y <= 37.4; y += 0.05) {
+        const pt: [number, number] = [x, y];
+        if (!pointInBbox(pt, b)) {
+          expect(pointInPolygon(pt, ring)).toBe(false);
+        }
+      }
+    }
   });
 });

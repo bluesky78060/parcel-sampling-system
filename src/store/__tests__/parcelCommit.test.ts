@@ -123,7 +123,7 @@ describe('runGeocodingAndCommit — 실행 중 다른 쓰기와의 경합', () =
     const running = runGeocodingAndCommit(geo.start);
 
     const second = makeParcel({ parcelId: '200' });
-    useParcelStore.getState().updateParcels([first, second]);
+    useParcelStore.getState().updateParcels((prev) => [...prev, second]);
 
     geo.release();
     await running;
@@ -174,6 +174,41 @@ describe('runGeocodingAndCommit — 실행 중 다른 쓰기와의 경합', () =
     await running;
 
     expect(useParcelStore.getState().allParcels[0].coords).toBeNull();
+  });
+});
+
+/**
+ * PROJ1-1-49. 위 재현들은 **이 파일의 두 함수가 규칙을 지키는지**를 볼 뿐이다.
+ * 다음에 추가될 async 핸들러가 낡은 배열을 넘기는 것은 아무 테스트도 막지 못했다 —
+ * 그것은 관례였다.
+ *
+ * 관례를 시그니처로 옮긴 뒤에는 **타입이 그것을 막는다.** 아래는 그 사실을
+ * 못 박는 자리다. 런타임 단언이 아니라 `tsc --noEmit`이 검사한다
+ * (`tsconfig.app.json`의 `include`가 `src`이므로 이 파일도 대상이다).
+ *
+ * 값 전달을 다시 허용하면 `@ts-expect-error`가 쓸모없어져
+ * **`tsc`가 "Unused '@ts-expect-error' directive"로 실패한다.** 즉 이 블록은
+ * 되돌림을 잡는 변이 탐지기다.
+ */
+describe('스토어 시그니처가 낡은 배열 전달을 막는다 (타입 수준)', () => {
+  it('배열을 직접 넘기면 컴파일되지 않는다', () => {
+    const stale = [makeParcel({ parcelId: '낡음' })];
+    const st = useParcelStore.getState();
+
+    // @ts-expect-error 낡은 배열을 그대로 넘기는 것이 이 티켓이 막으려는 것이다
+    const passArrayToUpdateParcels = () => st.updateParcels(stale);
+    // @ts-expect-error 대표필지 쪽도 같은 이유로 함수형만 받는다
+    const passArrayToUpdateRep = () => st.updateRepresentativeParcels(stale);
+
+    // 위 두 줄은 타입 검사만이 목적이다. 실제로 부르지 않는다 —
+    // 부르면 런타임에서 "stale is not a function"으로 죽을 뿐,
+    // 이 블록이 지키려는 것(타입)과는 무관하다.
+    expect(typeof passArrayToUpdateParcels).toBe('function');
+    expect(typeof passArrayToUpdateRep).toBe('function');
+
+    // 함수형은 당연히 통과한다.
+    st.updateParcels((prev) => prev);
+    st.updateRepresentativeParcels((prev) => prev);
   });
 });
 

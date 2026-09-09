@@ -60,6 +60,14 @@ export function KakaoMap({
     polygonCentroidCacheRef,
   });
 
+  // "미선택 필지 표시"가 드러낼 것이 남아 있는가.
+  //
+  // `markerCounts.unselected`는 **숨김 여부와 무관하게** 센다(마커를 안 만들 때도
+  // 세고 넘어간다). 그래서 이 값이 0이면 체크박스를 켜도 아무 일이 없다는 뜻이다.
+  //
+  // 이미 켜 둔 상태에서는 잠그지 않는다 — 잠그면 사용자가 다시 끌 수 없다.
+  const noUnselectedToShow = markerCounts.unselected === 0 && !showUnselected;
+
   // 좌표 없는 필지 수 계산
   const noCoordsCount = useMemo(
     () => parcels.filter((p) => !p.coords).length,
@@ -123,11 +131,29 @@ export function KakaoMap({
         >
           화면 맞춤
         </button>
+        {/* 드러낼 미선택 필지가 없으면 눌러도 아무 일이 없다 — 그때는 잠근다.
+            ReviewPage의 "추출 선택만"이 켜져 있으면 넘어오는 데이터에 미선택이
+            아예 없어서, 서로 다른 두 곳의 두 컨트롤이 겹쳐 보였다.
+
+            원인을 `showSelectedOnly`로 받지 않고 **데이터에서** 판정한다. 리 필터나
+            분류 필터로 미선택이 0이 되는 경우도 같은 상황이고, 그때도 맞다.
+
+            이미 켜 둔 상태에서는 잠그지 않는다 — 잠그면 되돌릴 수 없다. */}
         <div className="bg-white border border-gray-300 rounded-md px-3 py-1.5 text-xs shadow-sm">
-          <label className="flex items-center gap-1.5 cursor-pointer select-none">
+          <label
+            className={`flex items-center gap-1.5 select-none ${
+              noUnselectedToShow ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+            }`}
+            title={
+              noUnselectedToShow
+                ? '표시할 미선택 필지가 없습니다. 결과 검토 상단의 "추출 선택만"을 끄거나 필터를 넓히세요.'
+                : undefined
+            }
+          >
             <input
               type="checkbox"
               checked={showUnselected}
+              disabled={noUnselectedToShow}
               onChange={(e) => setShowUnselected(e.target.checked)}
               className="rounded"
             />

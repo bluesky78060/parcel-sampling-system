@@ -459,19 +459,25 @@ export async function batchGeocode(
         // 예전에는 `rateLimited`를 별도 if에서 집계해, 첫 시도가 미응답이고 두 번째가
         // 한도로 끝난 필지가 양쪽에 세어졌다. 그러면 화면에서 뺄셈으로 얻는 미응답
         // 건수가 0이 되어, 실재하는 카테고리가 목록에서 사라진다.
+        //
+        // "미응답"은 플래그가 아니다 — `answered`도 아니고 아래 둘도 아닌 나머지 전부다.
+        // 플래그로 두면 아무도 세우지 않은 경로가 생기고, 그 경로가 "좌표 없음"으로
+        // 떨어지는 것이 PROJ1-1-45 부류의 사고였다.
         let rateLimited = false;
-        let unreachable = false;
         let authRejected = false;
+        // `geocodeAddress`가 **정상 반환**했는가(좌표든 "없음"이든). 좌표를 지우는
+        // 결론은 이것이 참일 때만 허용된다 — 아래 배타 체인 참조.
+        let answered = false;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
             coords = await geocodeAddress(parcel.address);
+            answered = true;
             // 서버가 정상 응답했다 — 앞선 시도의 사유 판정을 **모두** 거둔다.
             // `geocodeAddress`는 "좌표 없음"을 throw가 아니라 null로 알리고 그 경로도
             // 여기를 지난다. authRejected를 남겨두면 정상 "결과 없음"이 인증 거부로
             // 집계되고, chunkNotFound가 오르지 않아 살아 있는 서버가 죽은 것으로
             // 판정된다(합계 불변식은 파티션이 성립하므로 이것을 잡지 못한다).
-            unreachable = false;
             authRejected = false;
             rateLimited = false;
             break;
@@ -482,18 +488,24 @@ export async function batchGeocode(
             if (err instanceof RateLimitError) {
               // 서버가 한도를 알려줬다 = 살아 있다. 앞선 시도의 미응답 판정을 덮는다.
               rateLimited = true;
-              unreachable = false;
               authRejected = false;
               break;
             }
             if (err instanceof GeocodeServiceError) {
-              unreachable = true;
               rateLimited = false;
               failureDetail = err.message;
               // 인증 거부로 죽은 것을 "서버 미응답"으로 표시하면 안내가 틀린다.
               // VWORLD는 API별로 키를 따로 등록하므로 데이터 API가 멀쩡해도
               // 지오코딩 API만 거부될 수 있다.
               authRejected = err.kind === 'auth';
+            } else {
+              // 분류하지 못한 예외. 예전에는 어느 플래그도 세우지 않고 조용히 삼켜,
+              // 재시도가 소진되면 아래 체인의 `else`에서 "좌표 없음"이 됐다 —
+              // 분류하지 못한 것이 곧 좌표 삭제였다. 미응답과 같은 칸에 둔다.
+              rateLimited = false;
+              authRejected = false;
+              failureDetail = err instanceof Error ? err.message : String(err);
+              console.warn(`[batchGeocoder] 분류하지 못한 예외 (${parcel.address}):`, err);
             }
             if (attempt < maxRetries) {
               await sleep(200, signal);
@@ -528,11 +540,13 @@ export async function batchGeocode(
         // 인증 거부 200→150. 수정 후 전부 200. 아래 배타 체인이 쓰는 판정을 그대로 쓴다 —
         // 다시 유도하면 두 곳이 갈라진다.
         //
-        // ⚠️ **`notFound`가 전부 진짜 데이터 문제인 것은 아니다.** `kakaoGeocoder`가
-        // 분류하지 못한 VWORLD `ERROR` 응답은 `responded = true; continue`로 빠져
-        // 조용히 `null`이 되고, 여기서 "좌표 없음"으로 집계돼 좌표가 지워진다.
-        // `res.error.code`가 손에 있으니 구분할 수 있다 — PROJ1-1-45로 분리했다.
-        const serviceFailure = coords === null && (rateLimited || authRejected || unreachable);
+        // ⚠️ **지우는 쪽이 긍정적 근거를 요구한다.** `answered`(정상 반환)일 때만
+        // "좌표 없음"이고, 그 밖의 어떤 끝(한도·인증·미응답·분류하지 못한 예외)도
+        // 좌표를 지킨다. 예전에는 반대였다 — 세 플래그 중 하나가 서야 지켰고, 아무것도
+        // 서지 않은 미분류 경로는 `else`로 떨어져 지웠다. PROJ1-1-45(분류하지 못한
+        // VWORLD `ERROR`가 null로 새던 것)가 그 사고의 한 예였고, 분류 밖의 예외가
+        // 여기까지 오는 경로가 또 하나였다. 기본값을 뒤집으면 그 부류가 통째로 닫힌다.
+        const serviceFailure = coords === null && !answered;
         if (!serviceFailure) {
           for (const idx of entry.allIndices) {
             results[idx] = { ...results[idx], coords };
@@ -548,21 +562,24 @@ export async function batchGeocode(
         if (coords === null) {
           chunkFail += entry.allIndices.length;
           failed += entry.allIndices.length;
-          // 배타 체인 — 한 필지는 정확히 한 카테고리에만 들어간다
-          if (rateLimited) {
+          // 배타 체인 — 한 필지는 정확히 한 카테고리에만 들어간다.
+          // 위의 좌표 보존 판정과 같은 술어(`answered`)를 쓴다 — 다시 유도하면 갈라진다.
+          if (answered) {
+            // 서버는 답했는데 이 주소에 좌표가 없다 — 데이터 쪽 문제다. 좌표를 지우는
+            // 유일한 가지이며, 유일하게 긍정적 근거를 요구한다.
+            chunkNotFound += entry.allIndices.length;
+            notFound += entry.allIndices.length;
+          } else if (rateLimited) {
             // 한도 초과는 데이터 문제가 아니다. 오늘 다시 해도 같다.
             chunkQuota += entry.allIndices.length;
             quotaBlocked += entry.allIndices.length;
           } else if (authRejected) {
             chunkServiceError += entry.allIndices.length;
             authBlocked += entry.allIndices.length;
-          } else if (unreachable) {
+          } else {
+            // 미응답, 또는 분류하지 못한 끝. 데이터에 대해 무언(無言)이다 — 지킨다.
             chunkServiceError += entry.allIndices.length;
             unreachableTotal += entry.allIndices.length;
-          } else {
-            // 서버는 답했는데 이 주소에 좌표가 없다 — 데이터 쪽 문제다
-            chunkNotFound += entry.allIndices.length;
-            notFound += entry.allIndices.length;
           }
         }
         done += entry.allIndices.length;

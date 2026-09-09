@@ -1082,3 +1082,41 @@ describe('batchGeocode — 재시도 리셋은 인증 판정도 거둔다', () =
  * 리셋은 등가가 아니며(각각 위 두 테스트가 죽인다), 이 한 줄만 대칭을 위해 남아
  * 있는 셈이다.
  */
+
+/**
+ * 배타 체인의 `else`는 **좌표를 지우는** 가지였다. `geocodeAddress`가
+ * `RateLimitError`·`GeocodeServiceError` 밖의 예외를 던지면 어느 플래그도 서지
+ * 않고, 재시도가 소진되면 `coords === null`이 "서버가 답했는데 좌표가 없다"로
+ * 떨어졌다 — 분류하지 못한 것이 곧 삭제였다(PROJ1-1-45와 같은 구조).
+ *
+ * 지우는 쪽에 긍정적 근거를 요구한다: `geocodeAddress`가 **정상 반환**했을 때만
+ * `notFound`다. 그 밖의 모든 끝은 데이터에 대해 무언이므로 좌표를 지킨다.
+ */
+describe('batchGeocode — 분류 못 한 예외는 좌표를 지우지 않는다', () => {
+  it('알 수 없는 예외로 끝나면 낡은 좌표를 지키고 미응답으로 센다', async () => {
+    geocodeImpl = async () => {
+      throw new TypeError("Cannot read properties of null (reading 'response')");
+    };
+    const { parcels: out, diagnostics } = await run(withCoords(5), true);
+    expect(out.every((p) => p.coords?.lat === 36.1)).toBe(true);
+    expect(diagnostics.notFound).toBe(0);
+    expect(diagnostics.unreachable).toBe(5);
+    expect(
+      diagnostics.notFound + diagnostics.quotaBlocked + diagnostics.unreachable + diagnostics.authBlocked,
+    ).toBe(diagnostics.attemptedFailures);
+  });
+
+  it('첫 시도가 알 수 없는 예외, 재시도가 정상 결과없음이면 notFound다', async () => {
+    let n = 0;
+    geocodeImpl = async () => {
+      if (n++ === 0) throw new TypeError('once');
+      return null;
+    };
+    const { parcels: out, diagnostics } = await batchGeocode(withCoords(1), {
+      force: true, skipHealthCheck: true, concurrency: 5, maxRetries: 1,
+    });
+    expect(out[0].coords).toBeNull();
+    expect(diagnostics.notFound).toBe(1);
+    expect(diagnostics.unreachable).toBe(0);
+  });
+});

@@ -2,6 +2,7 @@ import type { Parcel } from '../types';
 import { useParcelStore } from './parcelStore';
 import { applyGeocodedCoords } from '../lib/geocodeApply';
 import { generatePnuForParcels } from '../lib/pnuGenerator';
+import type { PnuGenerationResult } from '../lib/pnuGenerator';
 
 /**
  * 필지 스토어에 **오래 걸리는 작업의 결과를 기입하는** 지점들.
@@ -13,9 +14,8 @@ import { generatePnuForParcels } from '../lib/pnuGenerator';
  *
  * > `await` 뒤의 쓰기는 **그 시점의 스토어**를 읽어서 만들어야 한다.
  *
- * `updateParcels`는 병합이 아니라 **전체 교체**다(`set({ allParcels })`). 그래서
- * `await` 앞에서 읽어 둔 배열로 교체하면, 기다리는 동안 다른 경로가 써 넣은 것이
- * **전부 사라진다.**
+ * `updateParcels`는 병합이 아니라 **전체 교체**다. 그래서 `await` 앞에서 읽어 둔
+ * 배열로 교체하면, 기다리는 동안 다른 경로가 써 넣은 것이 **전부 사라진다.**
  *
  * 실제로 이렇게 유실됐다 (PROJ1-1-44).
  *
@@ -38,6 +38,21 @@ import { generatePnuForParcels } from '../lib/pnuGenerator';
  * 버튼 잠금(실행 중 PNU 생성 비활성화)은 이 창을 **좁히지만 닫지는 못한다** —
  * 잠금은 화면 하나의 UI 상태일 뿐이고, 스토어를 쓰는 경로가 늘어나면 다시 새는다.
  * 그래서 잠금은 보조 수단이고, 근본은 여기의 "사용 시점에 읽는다"이다.
+ *
+ * ## 관례에서 구조로 (PROJ1-1-49)
+ *
+ * 위 규칙은 오래 **관례**였다 — 이 파일의 두 함수가 지키기로 한 약속일 뿐,
+ * 다음에 추가될 async 핸들러가 낡은 배열을 넘기는 것을 막는 장치가 없었다.
+ *
+ * 그래서 `updateParcels`·`updateRepresentativeParcels`의 시그니처를
+ * **함수형만 받도록** 좁혔다. 이전 배열은 zustand의 `set` 안에서 읽히므로
+ * 낡은 배열을 넘긴다는 것 자체가 타입 수준에서 표현 불가능하다. 규칙이
+ * 문서에서 시그니처로 옮겨 갔고, 이 파일이 그 규칙의 **유일한 수호자**이기를
+ * 그만두었다.
+ *
+ * 부수 효과로 "`getState()`를 한 번 잡아 두고 쓰기 **이후에** 그 스냅샷에서
+ * 다시 읽는" 모양 두 곳이 사라졌다. 오늘은 등가였지만 이 파일이 존재하는
+ * 이유인 규칙을 그대로 위반하는 형태였다.
  */
 
 /**
@@ -62,19 +77,29 @@ export async function runGeocodingAndCommit(
   const geocoded = await start(targets);
 
   // ⚠️ 여기부터는 await 뒤다. `before`를 쓰면 안 된다 — 기다리는 동안 들어온
-  // 쓰기가 전부 사라진다. 반드시 **지금의** 스토어를 다시 읽는다.
-  const now = useParcelStore.getState();
+  // 쓰기가 전부 사라진다. 함수형 갱신이므로 이전 배열은 zustand의 `set`
+  // 안에서 읽힌다 — 여기서 미리 읽어 둔 것을 넘길 수단 자체가 없다.
+  useParcelStore.getState().updateParcels((prev) =>
+    applyGeocodedCoords(prev, geocoded),
+  );
 
-  const updatedAll = applyGeocodedCoords(now.allParcels, geocoded);
-  now.updateParcels(updatedAll);
+  // 빈 대표필지에는 `prev`를 그대로 돌려준다.
+  //
+  // ⚠️ **이것은 `set` 자체를 막지 못한다.** zustand의 `setState`는 `partial(state)`가
+  // 새 객체(`{representativeParcels: prev}`)이므로 언제나 새 상태 객체를 만들고
+  // 리스너를 부른다. 실측: 리스너 발화 1회, 상태 객체 동일성 false, 배열 동일성 true.
+  //
+  // 따라서 아끼는 것은 **셀렉터로 이 배열만 구독하는 화면**뿐이다(`ExtractPage`).
+  // 스토어를 통째로 구독하는 세 화면(`AnalyzePage`·`ExportPage`·`ReviewPage`)은
+  // 어차피 리렌더된다 — 배열 동일성 유지를 성능 보장으로 읽으면 안 된다.
+  //
+  // 판정을 `set` 안에서 하는 이유는 따로다. 밖에서 하면 쓰기 전에 읽은 값으로
+  // 판단하는 것이라 이 파일이 금지하는 바로 그 모양이 된다.
+  useParcelStore.getState().updateRepresentativeParcels((prev) =>
+    prev.length > 0 ? applyGeocodedCoords(prev, geocoded) : prev,
+  );
 
-  if (now.representativeParcels.length > 0) {
-    now.setRepresentativeParcels(
-      applyGeocodedCoords(now.representativeParcels, geocoded),
-    );
-  }
-
-  return updatedAll;
+  return useParcelStore.getState().allParcels;
 }
 
 /** 화면이 표시하는 PNU 생성 요약. */
@@ -92,13 +117,30 @@ export interface PnuCommitSummary {
  * 이 함수가 실행되면 이번에는 **좌표가** 사라진다(방향만 반대인 같은 사고).
  */
 export function generatePnuAndCommit(overwrite: boolean): PnuCommitSummary {
-  const st = useParcelStore.getState();
-
-  const { updated: updatedAll, result: resultAll } = generatePnuForParcels(
-    st.allParcels,
-    overwrite,
-  );
-  st.updateParcels(updatedAll);
+  // 요약은 갱신 함수 밖으로 꺼낸다. zustand의 `set(fn)`은 `fn`을 **동기적으로
+  // 정확히 한 번** 부르므로, 여기서 받는 값은 실제로 쓰인 것의 요약이다.
+  //
+  // `let resultAll!: PnuGenerationResult`(definite assignment)를 쓰지 않는다.
+  // 그것은 컴파일러 검사를 끄는데, **13줄 아래 대표필지 updater에는
+  // `if (prev.length === 0) return prev;`라는 조기 반환이 있다.** 두 블록이 시각적으로
+  // 대칭이라 다음 사람이 이쪽에도 같은 가드를 넣는 것은 자연스러운 편집이고,
+  // 그 순간 `resultAll`이 `undefined`가 되어 아래 `.generated`가 TypeError로 죽는다.
+  // 타입 검사도 테스트도 그 편집을 막지 못한다.
+  //
+  // 담는 그릇을 객체로 두는 것도 이유가 있다. `let x: T | null = null`로 두면
+  // TS의 흐름 분석이 **콜백 안에서만 대입되는 것을 보지 못해** `x`를 `null`로 좁히고,
+  // 그래서 `if (!x) throw` 뒤가 `never`가 되어 **가드 자체가 타입 오류**가 된다
+  // (실측: TS2339 3건). 프로퍼티에는 그 좁히기가 걸리지 않는다.
+  const box: { value?: PnuGenerationResult } = {};
+  useParcelStore.getState().updateParcels((prev) => {
+    const { updated, result } = generatePnuForParcels(prev, overwrite);
+    box.value = result;
+    return updated;
+  });
+  // set(fn)이 fn을 동기적으로 한 번 부른다는 가정이 깨지면 여기서 드러난다.
+  // 조용한 undefined 역참조보다 낫다.
+  if (!box.value) throw new Error('updateParcels의 갱신 함수가 실행되지 않았습니다');
+  const resultAll = box.value;
 
   // 세 값을 **전부** 합친다. 예전에는 `generated`만 합치고 `skipped`·`errors`는
   // 공익 쪽에서만 가져와, 대표필지가 매핑조차 안 돼도 화면에 "생성 n건, 오류 없음"이
@@ -107,16 +149,14 @@ export function generatePnuAndCommit(overwrite: boolean): PnuCommitSummary {
   let repGenerated = 0;
   let repSkipped = 0;
   let repErrors: string[] = [];
-  if (st.representativeParcels.length > 0) {
-    const { updated: updatedRep, result: resultRep } = generatePnuForParcels(
-      st.representativeParcels,
-      overwrite,
-    );
-    st.setRepresentativeParcels(updatedRep);
-    repGenerated = resultRep.generated;
-    repSkipped = resultRep.skipped;
-    repErrors = resultRep.errors;
-  }
+  useParcelStore.getState().updateRepresentativeParcels((prev) => {
+    if (prev.length === 0) return prev;
+    const { updated, result } = generatePnuForParcels(prev, overwrite);
+    repGenerated = result.generated;
+    repSkipped = result.skipped;
+    repErrors = result.errors;
+    return updated;
+  });
 
   return {
     generated: resultAll.generated + repGenerated,
