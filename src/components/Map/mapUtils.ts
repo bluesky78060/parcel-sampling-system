@@ -1,8 +1,5 @@
 import L from 'leaflet';
-import type { Parcel } from '../../types';
-import { escapeHtml } from '../../lib/htmlUtils';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
-import { isRepresentative } from '../../lib/parcelCategory';
 import { parcelMatchKey } from '../../lib/parcelKey';
 
 // 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
@@ -42,35 +39,11 @@ export function createStarIcon(color: string) {
   });
 }
 
-/**
- * 팝업 HTML.
- *
- * `surveyYear`를 인자로 받는다. 예전에는 여기서도 스토어를 직접 읽었다 —
- * `getMarkerColor`와 **같은 함정**이다. 색과 팝업이 서로 다른 시점의 연도를
- * 보면 화면 안에서 엇갈리므로, 둘 다 호출부가 구독한 하나의 값을 받는다.
- */
-export function createPopupContent(parcel: Parcel, isSelected: boolean, surveyYear: number): string {
-  const isRep = isRepresentative(parcel);
-  const categoryBadge = isRep
-    ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;">대표필지</span>'
-    : '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#eff6ff;color:#2563eb;border:1px solid #bfdbfe;">공익직불제</span>';
-  const selectionColor = isRep ? '#059669' : (isSelected ? '#2563eb' : '#999');
-  const selectionText = isRep ? '고정 선택' : (isSelected ? '추출 선택' : '미선택');
-
-  return `<div style="min-width:200px; font-family:sans-serif;">
-    <div style="display:flex;align-items:center;gap:6px;"><strong>${escapeHtml(parcel.farmerName)}</strong>${categoryBadge}</div>
-    <hr style="margin:6px 0; border-color:#eee;">
-    <table style="font-size:12px;">
-      <tr><td style="color:#888;padding:2px 8px 2px 0">필지번호</td><td><b>${escapeHtml(String(parcel.parcelId ?? ''))}</b></td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">주소</td><td>${escapeHtml(parcel.address ?? '')}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">리</td><td>${escapeHtml(parcel.ri ?? '')}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">면적</td><td>${parcel.area ? escapeHtml(parcel.area.toLocaleString()) + ' m\u00B2' : '-'}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">채취이력</td><td>${parcel.sampledYears.length ? escapeHtml(parcel.sampledYears.join(', ')) + '년' : '없음'}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">${surveyYear} 선택</td>
-        <td><b style="color:${selectionColor}">${escapeHtml(selectionText)}</b></td></tr>
-    </table>
-  </div>`;
-}
+// 팝업 HTML(`createPopupContent`)은 `lib/parcelPopup.ts`로 옮겼다. `getMarkerColor`와
+// **같은 논거**다 — 그 함수는 leaflet을 하나도 쓰지 않는데(이스케이퍼·분류 판정과
+// 템플릿 문자열뿐이다) 여기 있는 동안 node에서 import조차 못 해 커버리지가 0이었고,
+// 연도를 스토어 읽기로 되돌리는 변이가 테스트 476건·lint·tsc를 전부 통과했다.
+// 재수출하지 않는다.
 
 // Ray casting 알고리즘으로 점이 폴리곤 안에 있는지 확인
 export function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
