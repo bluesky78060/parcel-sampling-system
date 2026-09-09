@@ -3,8 +3,9 @@ import { jsonp } from '../lib/jsonp';
 import L from 'leaflet';
 import type { Parcel } from '../types';
 import { computePolygonCentroid, getVworldKey } from '../lib/kakaoGeocoder';
+import { getMarkerColor } from '../lib/markerColor';
+import { useSurveyStore } from '../store/surveyStore';
 import {
-  getMarkerColor,
   pointInPolygon,
   parcelKey,
   VWORLD_DATA_URL,
@@ -48,6 +49,22 @@ export function usePolygonLayer({
 
   const parcelsRef = useRef(parcels);
   parcelsRef.current = parcels;
+
+  /**
+   * 폴리곤 색도 마커 색과 같은 `getMarkerColor`에서 나온다.
+   *
+   * **여기에는 이 구독이 없었고, 그게 잠복 결함이었다.** 색은 아래 `L.geoJSON`의
+   * style 콜백이 **레이어를 그리는 순간** 계산해 화면에 박는다. 그 뒤 조사 연도를
+   * 바꿔도 이 effect가 다시 돌지 않으니 style 콜백도 다시 불리지 않고, 폴리곤은
+   * 옛 연도의 색으로 남았다. 같은 화면의 마커는(`useMarkerLayer`가 연도를 구독하므로)
+   * 새 색으로 바뀌어서, 마커와 폴리곤이 서로 다른 색이 됐다.
+   *
+   * 연도를 바꾸는 것은 드문 조작이라 VWorld 재조회 한 번이 붙는 비용은 받아들인다
+   * (지도는 이미 `moveend`마다 재조회한다). 폴리곤만 다시 칠하는 최적화는
+   * pnuLookup을 effect 밖으로 끌어내야 하는데, 이 effect는 최근에 여러 번 고쳐진
+   * 곳이라 그 이득을 위해 구조를 흔들 이유가 없다.
+   */
+  const surveyYear = useSurveyStore((st) => st.surveyYear);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -216,7 +233,7 @@ export function usePolygonLayer({
             const match = pnu ? pnuLookup.get(pnu) : null;
             if (!match) return { fillOpacity: 0, stroke: false };
 
-            const color = getMarkerColor(match.parcel, match.isSelected);
+            const color = getMarkerColor(match.parcel, match.isSelected, surveyYear);
             return {
               fillColor: color,
               fillOpacity: 0.35,
@@ -247,7 +264,7 @@ export function usePolygonLayer({
         polygonLayerRef.current = null;
       }
     };
-  }, [showPolygons, mapRef, polygonCentroidCacheRef, markerByKeyRef]);
+  }, [showPolygons, surveyYear, mapRef, polygonCentroidCacheRef, markerByKeyRef]);
 
   return {
     polygonZoomWarning,
