@@ -4,23 +4,17 @@ import { escapeHtml } from '../../lib/htmlUtils';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from '../../lib/bonghwaBounds';
 import { isRepresentative } from '../../lib/parcelCategory';
 import { parcelMatchKey } from '../../lib/parcelKey';
-import { useSurveyStore, sampledYearsOf } from '../../store/surveyStore';
 
 // 경계값은 lib/bonghwaBounds에 하나만 둔다. 예전에 여기 복제해 둔 값이
 // 지오코딩 쪽과 갈라지면서, 통과한 좌표가 마커 단계에서 버려졌다.
 export { BONGHWA_BOUNDS };
 export const isInBonghwa = isInBonghwaBounds;
 
-export function getMarkerColor(parcel: Parcel, isSelected: boolean): string {
-  if (isRepresentative(parcel) && isSelected) return '#059669';
-  if (isSelected) return '#2563eb';
-  // 기채취 연도는 조사 연도에서 파생된다. 최근 연도(N-1)가 빨강, 그 전(N-2)이 주황.
-  const [recent, older] = sampledYearsOf(useSurveyStore.getState().surveyYear);
-  if (parcel.sampledYears.includes(recent)) return '#dc2626';
-  if (parcel.sampledYears.includes(older)) return '#ea580c';
-  if (parcel.isEligible) return '#6b7280';
-  return '#9ca3af';
-}
+// `getMarkerColor`는 `lib/markerColor.ts`로 옮겼다. 이 모듈은 leaflet을
+// top-level import 하는데 leaflet은 로드 시점에 `window`를 만져서, node 환경인
+// 이 저장소의 테스트에서는 여기 있는 것을 **아무것도 import할 수 없다.**
+// 색 판정은 순수 로직이므로 leaflet에 묶어 둘 이유가 없다. 재수출도 하지 않는다 —
+// 같은 이름의 통로가 둘이 되면 한쪽만 고치는 실수가 다시 열린다.
 
 export function createCircleIcon(color: string) {
   return L.divIcon({
@@ -48,7 +42,14 @@ export function createStarIcon(color: string) {
   });
 }
 
-export function createPopupContent(parcel: Parcel, isSelected: boolean): string {
+/**
+ * 팝업 HTML.
+ *
+ * `surveyYear`를 인자로 받는다. 예전에는 여기서도 스토어를 직접 읽었다 —
+ * `getMarkerColor`와 **같은 함정**이다. 색과 팝업이 서로 다른 시점의 연도를
+ * 보면 화면 안에서 엇갈리므로, 둘 다 호출부가 구독한 하나의 값을 받는다.
+ */
+export function createPopupContent(parcel: Parcel, isSelected: boolean, surveyYear: number): string {
   const isRep = isRepresentative(parcel);
   const categoryBadge = isRep
     ? '<span style="display:inline-block;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:600;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;">대표필지</span>'
@@ -65,7 +66,7 @@ export function createPopupContent(parcel: Parcel, isSelected: boolean): string 
       <tr><td style="color:#888;padding:2px 8px 2px 0">리</td><td>${escapeHtml(parcel.ri ?? '')}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">면적</td><td>${parcel.area ? escapeHtml(parcel.area.toLocaleString()) + ' m\u00B2' : '-'}</td></tr>
       <tr><td style="color:#888;padding:2px 8px 2px 0">채취이력</td><td>${parcel.sampledYears.length ? escapeHtml(parcel.sampledYears.join(', ')) + '년' : '없음'}</td></tr>
-      <tr><td style="color:#888;padding:2px 8px 2px 0">${useSurveyStore.getState().surveyYear} 선택</td>
+      <tr><td style="color:#888;padding:2px 8px 2px 0">${surveyYear} 선택</td>
         <td><b style="color:${selectionColor}">${escapeHtml(selectionText)}</b></td></tr>
     </table>
   </div>`;

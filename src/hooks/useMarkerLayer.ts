@@ -5,9 +5,9 @@ import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
 import { anyMarkerInView, deriveFitState, reduceFit } from '../lib/mapFitPolicy';
 import type { MapFitState } from '../lib/mapFitPolicy';
 import { useSurveyStore } from '../store/surveyStore';
+import { getMarkerColor } from '../lib/markerColor';
 import {
   isInBonghwa,
-  getMarkerColor,
   createCircleIcon,
   createStarIcon,
   createPopupContent,
@@ -72,6 +72,7 @@ function createParcelMarker(
   circleRef: React.MutableRefObject<L.Circle | null>,
   showDistanceCircleRef: React.MutableRefObject<boolean>,
   onMarkerClickRef: React.MutableRefObject<((parcel: Parcel) => void) | undefined>,
+  surveyYear: number,
 ): L.Marker {
   const icon = isRep ? createStarIcon(color) : createCircleIcon(color);
   const marker = L.marker(latlng, {
@@ -81,7 +82,11 @@ function createParcelMarker(
   // 팝업 내용을 **열 때** 만든다. 미리 만들면 열지도 않을 HTML이 마커마다 힙에
   // 남는다 — 4만 건 기준 실측 38MB다. Leaflet은 bindPopup에 함수를 받으므로
   // 지연 생성이 그대로 지원된다.
-  marker.bindPopup(() => createPopupContent(parcel, isSelected));
+  //
+  // `surveyYear`는 마커를 만든 시점의 값을 가둔다. 연도가 바뀌면 아래 effect가
+  // 다시 돌아 마커를 새로 만들므로 낡을 수 없다. 스토어를 열 때 읽던 예전 방식은
+  // 색(마커 생성 시점)과 팝업(여는 시점)이 서로 다른 연도를 볼 여지가 있었다.
+  marker.bindPopup(() => createPopupContent(parcel, isSelected, surveyYear));
 
   marker.on('click', () => {
     map.flyTo(latlng, PARCEL_DETAIL_ZOOM, { duration: 0.8 });
@@ -187,9 +192,19 @@ export function useMarkerLayer({
   const showDistanceCircleRef = useRef(showDistanceCircle);
   showDistanceCircleRef.current = showDistanceCircle;
 
-  // 마커 색은 기채취 연도(N-1 빨강, N-2 주황)에 달렸고, `getMarkerColor`가 그것을
-  // 스토어에서 직접 읽는다. 구독하지 않으면 조사 연도를 바꿔도 마커가 옛 색으로 남는다.
-  // 팝업은 열 때 읽으므로 새 연도를 쓰는데, 그러면 색과 팝업이 엇갈린다.
+  /**
+   * **이 구독은 `getMarkerColor` 인자화 뒤에도 계속 필요하다.**
+   *
+   * 마커 색은 기채취 연도(N-1 빨강, N-2 주황)에서 나오는데, 그 색은 마커를 만드는
+   * 순간 아이콘 SVG에 박혀 화면에 남는다. 연도가 바뀌었을 때 아래 effect를 다시
+   * 돌리는 것 말고는 색을 갱신할 방법이 없고, effect를 다시 돌리려면 컴포넌트가
+   * 리렌더돼야 한다 — 그것을 하는 것이 이 구독이다.
+   *
+   * 달라진 것은 **이유가 보인다는 점**이다. 예전에는 effect 본문 어디에도
+   * `surveyYear`가 없어서, 의존성 배열의 그 항목만 보고는 왜 있는지 알 수 없었고
+   * (lint 기준으로는 오히려 불필요한 의존성이었다) 누가 지워도 이상해 보이지 않았다.
+   * 이제 본문이 `surveyYear`를 실제로 쓰므로 lint가 지우는 것을 막는다.
+   */
   const surveyYear = useSurveyStore((st) => st.surveyYear);
 
   // Add marker layers to map once
@@ -266,10 +281,10 @@ export function useMarkerLayer({
         continue;
       }
 
-      const color = getMarkerColor(parcel, isSelected);
+      const color = getMarkerColor(parcel, isSelected, surveyYear);
       const latlng: L.LatLngTuple = [lat, lng];
 
-      const marker = createParcelMarker(parcel, latlng, color, isRep, isSelected, map, circleRef, showDistanceCircleRef, onMarkerClickRef);
+      const marker = createParcelMarker(parcel, latlng, color, isRep, isSelected, map, circleRef, showDistanceCircleRef, onMarkerClickRef, surveyYear);
 
       // 키가 없으면 캐시에 등록하지 않는다. 등록하면 서로 다른 필지가 한 항목을
       // 공유해 먼저 그린 마커의 참조가 유실된다.
