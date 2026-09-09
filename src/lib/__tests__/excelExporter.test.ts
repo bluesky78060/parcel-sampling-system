@@ -153,6 +153,18 @@ describe('buildWorkbook — 시트명이 조사 연도를 따른다', () => {
  * 그래서 **접두사를 이스케이프하지 않는다.** 했다면 `-1200` 같은 정상 값이 `'-1200`이
  * 되어 담당자가 셀을 다시 손봐야 한다 — 없는 위험을 막으려고 산출물을 망가뜨리는 셈이다.
  *
+ * ⚠️ **어떤 값이 걸리는지 정정한다.** 커밋 `4cbebbd`와 이 파일의 이전 주석은
+ * "`-1200`·`-`·`010-1234-5678`이 전부 걸린다"고 적었는데, `010-1234-5678`은
+ * **`0`으로 시작하므로 `/^[=+\-@]/`에 걸리지 않는다.** 이스케이프해도 멀쩡하다.
+ * 결론(이스케이프하지 말 것)은 그대로지만 근거로 든 예시가 틀렸다.
+ *
+ * 실제로 걸리는 정상 값은 **접두사가 `= + - @`인 것들**이다.
+ *
+ *   - `-1200`             음수 (면적·좌표 보정치)
+ *   - `-`                 빈칸 대용 대시
+ *   - `+82-10-1234-5678`  국제표기 전화번호 — 전화번호 중 **이것만** 걸린다
+ *   - `@`·`=`로 시작하는 품목명·비고 등 자유 입력
+ *
  * 대신 **되돌아가는 것을 막는다.** 누가 CSV 내보내기를 붙이거나 수식 셀을 만들기
  * 시작하면 그 순간 진짜 위험이 된다.
  *
@@ -210,18 +222,61 @@ describe('buildWorkbook — 수식 주입', () => {
   /**
    * **이스케이프하지 않는다는 결정을 못 박는다.** 접두사를 무력화하면 이 값들이
    * `'-1200` 처럼 되어 담당자가 손봐야 한다.
+   *
+   * **한 컬럼만 보면 안 된다.** 이전 판은 `필지주소` 한 칸만 봤다. 그런데
+   * 전화번호·품목명·지목은 `getRaw()`를 거쳐 흘러 들어오는 별개 경로라,
+   * 거기에만 과잉 방어가 붙어도 이 테스트는 통과했다. 행 전체를 단언한다.
    */
-  it('음수·전화번호 같은 정상 값을 건드리지 않는다', () => {
+  it('음수·대시·국제표기 전화번호를 행 전체에 걸쳐 건드리지 않는다', () => {
+    // getRaw()가 흘려보내는 컬럼에 접두사 값을 심는다.
+    // `경영체주소`는 p.farmerAddress가 비어야 rawData로 폴백한다.
+    const rawData: Record<string, unknown> = {
+      '전화번호': '-1200',                  // `-` — 음수처럼 보이는 정상 값
+      '휴대전화번호': '+82-10-1234-5678',   // `+` — 전화번호 중 유일하게 걸리는 형태
+      '경영체주소': '010-1234-5678',        // `0` 시작 — 애초에 걸리지 않는다
+      '공부지목': '-',                      // 빈칸 대용 대시
+      '실제지목': '-0',
+      '품목명_대분류명': '-',
+      '품목명_중분류명': '@봉화농장',        // `@`
+      '품목명_소분류명': '=예비',            // `=`
+    };
+    const wb = build([both({ pnu: 'P0', address: '-1200', farmerAddress: '', rawData })]);
+
+    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
+    const [header, row] = rows;
+    const at = (name: string) => row[header.indexOf(name)];
+
+    expect(at('필지주소')).toBe('-1200');
+    expect(at('전화번호')).toBe('-1200');
+    expect(at('휴대전화번호')).toBe('+82-10-1234-5678');
+    expect(at('경영체주소')).toBe('010-1234-5678');
+    expect(at('공부지목')).toBe('-');
+    expect(at('실제지목')).toBe('-0');
+    expect(at('품목명_대분류명')).toBe('-');
+    expect(at('품목명_중분류명')).toBe('@봉화농장');
+    expect(at('품목명_소분류명')).toBe('=예비');
+
+    // 행 전체 — 어느 한 칸이라도 이스케이프되면 여기서 잡힌다
+    expect(row.filter((v) => typeof v === 'string' && v.startsWith("'"))).toEqual([]);
+  });
+
+  /** 시트 하나만 보면 `전체필지`·`제외필지` 쪽 과잉 방어를 놓친다. */
+  it('워크북 어느 시트에도 이스케이프된 셀이 없다', () => {
     const wb = build([
-      both({ pnu: 'P0', address: '-1200' }),
-      both({ pnu: 'P1', address: '010-1234-5678' }),
+      both({ pnu: 'P0', address: '-1200', landCategoryOfficial: '-', landCategoryActual: '@전' }),
+      both({ pnu: 'P1', address: '+82-10-1234-5678' }),
       both({ pnu: 'P2', address: '-' }),
     ]);
-    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
-    const col = rows[0].indexOf('필지주소');
-    const vals = rows.slice(1).map((r) => r[col]).sort();
-    expect(vals).toEqual(['-', '-1200', '010-1234-5678']);
-    expect(vals.some((v) => v.startsWith("'"))).toBe(false);
+
+    const escaped: string[] = [];
+    for (const name of wb.SheetNames) {
+      for (const r of cellsOf(wb, name)) {
+        for (const v of r) {
+          if (typeof v === 'string' && v.startsWith("'")) escaped.push(`${name}: ${v}`);
+        }
+      }
+    }
+    expect(escaped).toEqual([]);
   });
 
   /** 그 XML에 수식 요소 자체가 없다 */
