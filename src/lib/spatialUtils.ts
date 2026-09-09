@@ -252,3 +252,53 @@ export function findDistantPairs(
 
   return results;
 }
+
+/** 폴리곤 링의 경계 상자. `pointInPolygon` 앞에 두는 선필터용이다. */
+export interface Bbox {
+  minX: number; minY: number; maxX: number; maxY: number;
+}
+
+/** 링 한 번 순회로 경계 상자를 만든다. 피처당 한 번만 계산하면 된다. */
+export function ringBbox(ring: readonly (readonly [number, number])[]): Bbox {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of ring) {
+    if (x < minX) minX = x;
+    if (x > maxX) maxX = x;
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
+  }
+  return { minX, minY, maxX, maxY };
+}
+
+/** 점이 경계 상자 안인가. 경계 위는 안으로 본다 — 선필터라 넓게 잡아야 안전하다. */
+export function pointInBbox(point: readonly [number, number], b: Bbox): boolean {
+  return point[0] >= b.minX && point[0] <= b.maxX && point[1] >= b.minY && point[1] <= b.maxY;
+}
+
+/**
+ * 점이 폴리곤 안인가 (ray casting).
+ *
+ * `components/Map/mapUtils`에 있던 것을 옮겼다. leaflet을 하나도 쓰지 않는 순수
+ * 기하인데 그 파일이 leaflet을 top-level import 해서 **node에서 테스트할 수 없었고,
+ * 실제로 커버리지가 0이었다.** `getMarkerColor`·`createPopupContent`와 같은 이유다.
+ *
+ * ⚠️ **`pointInBbox`로 먼저 거르십시오.** `usePolygonLayer`가 지도를 팬할 때마다
+ * 피처마다 미매칭 필지 전량을 이 함수로 훑는데, PNU 컬럼이 없는 파일이면 그 수가
+ * 4만이 넘는다. 실측(링 20점): 피처 2,000 × 미매칭 40,809 = 81.6M회 → **3.6초**.
+ * 실제 지적 폴리곤은 링이 더 길어 더 나쁘다. bbox 선필터는 링 순회 한 번 값으로
+ * 대부분을 걸러 낸다.
+ */
+export function pointInPolygon(
+  point: readonly [number, number],
+  polygon: readonly (readonly [number, number])[],
+): boolean {
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i];
+    const [xj, yj] = polygon[j];
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}

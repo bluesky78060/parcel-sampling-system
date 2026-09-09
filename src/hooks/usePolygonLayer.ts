@@ -5,11 +5,8 @@ import type { Parcel } from '../types';
 import { computePolygonCentroid, getVworldKey } from '../lib/kakaoGeocoder';
 import { getMarkerColor } from '../lib/markerColor';
 import { useSurveyStore } from '../store/surveyStore';
-import {
-  pointInPolygon,
-  parcelKey,
-  VWORLD_DATA_URL,
-} from '../components/Map/mapUtils';
+import { parcelKey, VWORLD_DATA_URL } from '../components/Map/mapUtils';
+import { pointInBbox, pointInPolygon, ringBbox } from '../lib/spatialUtils';
 
 interface UsePolygonLayerParams {
   mapRef: React.RefObject<L.Map | null>;
@@ -184,9 +181,19 @@ export function usePolygonLayer({
               : f.geometry.coordinates[0];
             if (!ring) return false;
 
+            // ⚠️ 이 루프는 **피처마다 미매칭 필지 전량**을 훑는다. 매칭된 것만
+            // splice로 빠지므로 안 맞는 것은 다음 피처에서 또 훑는다. PNU 컬럼이
+            // 없는 파일이면 그 수가 4만이 넘고, 실측(링 20점)으로 피처 2,000 ×
+            // 미매칭 40,809 = 81.6M회에 **3.6초**다 — 팬 한 번에 화면이 멎는다.
+            //
+            // bbox는 링 순회 **한 번** 값이고 대부분의 점을 곱셈·나눗셈 없이
+            // 걸러 낸다. 링이 길수록 이득이 커진다.
+            const bbox = ringBbox(ring);
             for (let i = coordParcels.length - 1; i >= 0; i--) {
               const cp = coordParcels[i];
-              if (pointInPolygon([cp.lng, cp.lat], ring)) {
+              const pt: [number, number] = [cp.lng, cp.lat];
+              if (!pointInBbox(pt, bbox)) continue;
+              if (pointInPolygon(pt, ring)) {
                 pnuLookup.set(pnu, { parcel: cp.parcel, isSelected: cp.isSelected });
                 coordParcels.splice(i, 1);
                 return true;
