@@ -712,13 +712,26 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
         // 예전에는 여기서 그대로 반환했고, `geocodeAddress`가 범위 검사로 탈락시키면
         // 지번 조회의 `failure`가 함께 버려져 null이 됐다 — 서버 오류가 "좌표 없음"으로
         // 세탁되어 좌표가 지워졌다(실측: 지번 ERROR / 도로명 봉화 밖 → 삭제 3/3).
-        // 도로명 조회도 시도되지 않았다. `geocodeAddress`의 검사는 Kakao 폴백을 위해 남긴다.
+        // 도로명 조회도 시도되지 않았다.
+        //
+        // 이 검사가 생기면서 `geocodeAddress`의 VWORLD 쪽 범위 검사는 두 번째 항이
+        // 항상 참인 이중 방어가 됐다(`geocodeVworld`가 통과한 좌표만 돌려주므로).
+        // 실제로 필요한 것은 Kakao 폴백 쪽 검사다.
         console.warn(
           `[vworld] ${label} 좌표가 봉화군 밖 (${outcome.coord.lat}, ${outcome.coord.lng}): ${address}`);
       } else if (elapsed > 500) {
         console.info(`  △ VWORLD ${label} 결과없음 (${elapsed}ms): ${address}`);
       }
-      // 정상 응답, 좌표 없음. 지번이면 이것이 권위 있는 답이다.
+      // 정상 응답이고 **쓸 수 있는 좌표가 없다** — 결과 없음, 또는 봉화군 밖 좌표.
+      // 지번이면 이것이 권위 있는 답이다.
+      //
+      // ⚠️ **봉화군 밖 좌표도 여기 포함된다.** 서버가 이 주소를 다른 지역으로
+      // 해석했다는 뜻이므로 주소 데이터 쪽 문제로 본다 — 즉 지번이 그렇게 답했으면
+      // 도로명에서 서버 오류를 봤더라도 좌표를 지운다(실측: 지번 봉화밖 + 도로명
+      // ERROR → notFound=3, 삭제 3/3). 이 파일이 세운 "지우는 결론은 긍정적 근거를
+      // 요구한다"의 **유일한 예외**이며, 의도된 것이다. 근거로 치지 않으려면
+      // `outcome.kind === 'empty'`일 때만 세우면 되는데, 그러면 늘 봉화 밖 좌표를
+      // 주는 잘못된 주소가 재변환으로 영영 초기화되지 않는다.
       if (type === 'parcel') parcelAnswered = true;
     } catch (err) {
       if (err instanceof RateLimitError) throw err;

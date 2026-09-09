@@ -219,7 +219,7 @@ describe('countMapLegend', () => {
       makeParcel({ pnu: 'C', coords: { lat: 36.9, lng: 128.9 }, sampledYears: [2025] }),
       makeParcel({ pnu: 'D', coords: { lat: 36.9, lng: 128.9 }, sampledYears: [2024] }),
     ];
-    const counts = countMapLegend(all, [], [all[0]], years);
+    const counts = countMapLegend(all, [], [all[0]], years, false);
     expect(counts.selected).toBe(1);
     expect(counts.unselected).toBe(1);
     expect(counts.sampledByYear[2025]).toBe(1);
@@ -228,7 +228,7 @@ describe('countMapLegend', () => {
 
   it('좌표가 없으면 따로 센다', () => {
     const all = [makeParcel({ pnu: 'A', coords: null })];
-    expect(countMapLegend(all, [], [], years).noCoords).toBe(1);
+    expect(countMapLegend(all, [], [], years, false).noCoords).toBe(1);
   });
 
   /**
@@ -244,7 +244,7 @@ describe('countMapLegend', () => {
   it('마스터에도 있는 대표필지를 두 번 세지 않는다', () => {
     const rep = makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 } });
     const master = makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 } });
-    const counts = countMapLegend([master], [rep], [rep], years);
+    const counts = countMapLegend([master], [rep], [rep], years, false);
     expect(counts.representative).toBe(1);
     expect(counts.unselected).toBe(0);
     expect(counts.selected).toBe(0);
@@ -261,7 +261,7 @@ describe('countMapLegend', () => {
   it('상한에 걸려 결과에서 빠진 대표필지는 지도 기준에서 빼고 따로 센다', () => {
     const kept = makeParcel({ pnu: 'REP_KEPT', coords: { lat: 36.9, lng: 128.9 } });
     const dropped = makeParcel({ pnu: 'REP_OVER', coords: { lat: 36.9, lng: 128.9 } });
-    const counts = countMapLegend([], [kept, dropped], [kept], years);
+    const counts = countMapLegend([], [kept, dropped], [kept], years, false);
     expect(counts.representative).toBe(1);
     expect(counts.representativeExcluded).toBe(1);
     // 제외분을 좌표 미변환으로 흘려보내면 "좌표 변환을 다시 하라"는 엉뚱한 안내가 된다
@@ -270,7 +270,7 @@ describe('countMapLegend', () => {
 
   it('결과에 든 대표필지가 좌표를 못 얻었으면 제외가 아니라 좌표 미변환이다', () => {
     const rep = makeParcel({ pnu: 'REP_A', coords: null });
-    const counts = countMapLegend([], [rep], [rep], years);
+    const counts = countMapLegend([], [rep], [rep], years, false);
     expect(counts.noCoords).toBe(1);
     expect(counts.representative).toBe(0);
     expect(counts.representativeExcluded).toBe(0);
@@ -282,9 +282,48 @@ describe('countMapLegend', () => {
    */
   it('키가 없어 지도에 못 그리는 대표필지도 제외로 센다', () => {
     const keyless = makeParcel({ pnu: '', address: '', parcelId: '', coords: { lat: 36.9, lng: 128.9 } });
-    const counts = countMapLegend([], [keyless], [keyless], years);
+    const counts = countMapLegend([], [keyless], [keyless], years, false);
     expect(counts.representative).toBe(0);
     expect(counts.representativeExcluded).toBe(1);
+  });
+
+  /**
+   * **재리뷰 지적 (PROJ1-1-35 B 후속).** "추출 선택만"을 끄면 지도가
+   * `allParcelsWithRep`을 받고, `useMarkerLayer`는 `isRepresentative(p)`면 무조건
+   * 대표로 센다 — 상한 초과분도 키 없는 것도 전부 마커가 된다.
+   *
+   * 처음 고칠 때 이 모드를 보지 않아, 기본 화면을 맞추면서 이쪽을 어긋나게 했다
+   * (범례 200 / 배지 260). 범례 툴팁의 "지도에 없는 건수"도 그 모드에서 거짓이 됐다.
+   */
+  describe('지도가 결과 밖 필지까지 받는 모드 ("추출 선택만" 꺼짐)', () => {
+    it('상한 초과분도 지도에 있으므로 대표로 세고 제외는 0이다', () => {
+      const kept = makeParcel({ pnu: 'REP_KEPT', coords: { lat: 36.9, lng: 128.9 } });
+      const dropped = makeParcel({ pnu: 'REP_OVER', coords: { lat: 36.9, lng: 128.9 } });
+      const counts = countMapLegend([], [kept, dropped], [kept], years, true);
+      expect(counts.representative).toBe(2);
+      expect(counts.representativeExcluded).toBe(0);
+    });
+
+    it('키가 없는 대표필지도 이 모드에서는 지도에 그려지므로 대표로 센다', () => {
+      const keyless = makeParcel({ pnu: '', address: '', parcelId: '', coords: { lat: 36.9, lng: 128.9 } });
+      const counts = countMapLegend([], [keyless], [], years, true);
+      expect(counts.representative).toBe(1);
+      expect(counts.representativeExcluded).toBe(0);
+    });
+
+    it('초과분에 좌표가 없으면 제외가 아니라 좌표 미변환이다', () => {
+      const dropped = makeParcel({ pnu: 'REP_OVER', coords: null });
+      const counts = countMapLegend([], [dropped], [], years, true);
+      expect(counts.noCoords).toBe(1);
+      expect(counts.representativeExcluded).toBe(0);
+    });
+
+    /** 같은 입력이 모드에 따라 갈린다는 것 자체를 못박는다 */
+    it('같은 입력이라도 기본 모드에서는 제외로 센다', () => {
+      const dropped = makeParcel({ pnu: 'REP_OVER', coords: { lat: 36.9, lng: 128.9 } });
+      expect(countMapLegend([], [dropped], [], years, false).representativeExcluded).toBe(1);
+      expect(countMapLegend([], [dropped], [], years, true).representativeExcluded).toBe(0);
+    });
   });
 
   it('전량이 결과에 들어가면 제외는 0이다', () => {
@@ -292,20 +331,20 @@ describe('countMapLegend', () => {
       makeParcel({ pnu: 'R1', coords: { lat: 36.9, lng: 128.9 } }),
       makeParcel({ pnu: 'R2', coords: { lat: 36.9, lng: 128.9 } }),
     ];
-    const counts = countMapLegend([], reps, reps, years);
+    const counts = countMapLegend([], reps, reps, years, false);
     expect(counts.representative).toBe(2);
     expect(counts.representativeExcluded).toBe(0);
   });
 
   it('부적격이고 기채취도 아니면 어디에도 안 센다', () => {
     const all = [makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 }, isEligible: false })];
-    const counts = countMapLegend(all, [], [], years);
+    const counts = countMapLegend(all, [], [], years, false);
     expect(counts.selected + counts.unselected).toBe(0);
   });
 
   it('기채취 연도가 바뀌어도 그 연도로 집계한다', () => {
     const all = [makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 }, sampledYears: [2030] })];
-    const counts = countMapLegend(all, [], [], [2030, 2029]);
+    const counts = countMapLegend(all, [], [], [2030, 2029], false);
     expect(counts.sampledByYear[2030]).toBe(1);
   });
 });

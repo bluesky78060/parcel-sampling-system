@@ -102,10 +102,19 @@ export function ReviewPage() {
 
   const riList = useMemo(() => getRiList(), [getRiList]);
 
+  // 범례는 지도와 **같은 전제**로 세어야 한다. 아래 `<KakaoMap parcels={...}>`가
+  // 넘기는 배열과 같은 판단(`showSelectedOnly`)을 그대로 넘긴다 — 여기서 갈라지면
+  // 범례와 지도 배지의 숫자가 조용히 어긋난다.
   const mapLegendCounts = useMemo(
     () =>
-      countMapLegend(allParcels, representativeParcels, selectedParcels, sampledYearsOf(surveyYear)),
-    [allParcels, selectedParcels, representativeParcels, surveyYear],
+      countMapLegend(
+        allParcels,
+        representativeParcels,
+        selectedParcels,
+        sampledYearsOf(surveyYear),
+        !showSelectedOnly,
+      ),
+    [allParcels, selectedParcels, representativeParcels, surveyYear, showSelectedOnly],
   );
 
   if (!result) return null;

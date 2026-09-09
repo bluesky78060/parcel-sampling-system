@@ -139,12 +139,19 @@ export interface MapLegendCounts {
  * 지도 범례의 분류별 개수.
  *
  * @param sampledYears 기채취 연도 두 개(최근순). 조사 연도에서 파생된 값이 들어온다.
+ * @param mapShowsAllParcels 지도가 **결과 밖 필지까지** 받는가
+ *   (`ReviewPage`의 "추출 선택만"이 꺼진 상태 = `allParcelsWithRep`을 넘기는 모드).
+ *
+ *   기본값을 두지 않는다. 이 인자가 없던 동안 범례와 지도 배지가 서로 다른 전제로
+ *   세어 두 숫자가 조용히 어긋났고, 한쪽 모드를 맞추면 다른 쪽이 틀어졌다.
+ *   호출자가 매번 "지도가 무엇을 받는가"를 밝히게 해야 그 부류가 닫힌다.
  */
 export function countMapLegend(
   allParcels: Parcel[],
   representativeParcels: Parcel[],
   selectedParcels: Parcel[],
   sampledYears: readonly [number, number],
+  mapShowsAllParcels: boolean,
 ): MapLegendCounts {
   const selectedKeys = keySetOf(selectedParcels, parcelMatchKey);
   const repKeys = keySetOf(representativeParcels, parcelMatchKey);
@@ -156,16 +163,22 @@ export function countMapLegend(
   let noCoords = 0;
   const sampledByYear: Record<number, number> = { [sampledYears[0]]: 0, [sampledYears[1]]: 0 };
 
-  // 대표필지는 여기서 센다.
+  // 대표필지는 여기서 센다. **지도에 실제로 올라간 것만** `representative`다.
   //
-  // **결과에 든 것만 지도에 있다.** `repCap`(리별 상한)을 넘은 초과분은
-  // `result.selectedParcels`에 들어가지 않으므로 마커도 만들어지지 않는다.
-  // 그것을 범례에서 함께 세면 배지와 어긋난다 — 초과분은 따로 센다.
+  // 어느 것이 올라가는지는 모드에 따라 다르다.
+  //
+  //   "추출 선택만" 켜짐(기본) → 지도는 `mapSelectedParcels`를 받는다.
+  //     `repCap`(리별 상한)을 넘은 초과분은 `result.selectedParcels`에 없으므로
+  //     마커도 없다. 키가 없는 대표필지도 `buildMapSelectedParcels`가 `key !== null`로
+  //     걸러 없다.
+  //   "추출 선택만" 꺼짐 → 지도는 `allParcelsWithRep`을 받는다. 초과분도 키 없는 것도
+  //     전부 올라가고, `useMarkerLayer`는 `isRepresentative(p)`면 무조건 대표로 센다.
+  //
+  // 그래서 한쪽 모드에 맞추면 다른 쪽이 틀어진다. 모드를 인자로 받아 같은 전제로 센다.
   for (const p of representativeParcels) {
     const key = parcelMatchKey(p);
-    // 키가 없으면 결과에 있는지 판정할 수 없고, 지도도 키 없는 필지는 그리지 않는다
-    // (`buildMapSelectedParcels`가 `key !== null`로 거른다). 실제와 맞춰 제외로 센다.
-    if (key === null || !selectedKeys.has(key)) {
+    const onMap = mapShowsAllParcels || (key !== null && selectedKeys.has(key));
+    if (!onMap) {
       representativeExcluded++;
       continue;
     }
