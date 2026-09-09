@@ -6,11 +6,11 @@ import { anyMarkerInView, deriveFitState, reduceFit } from '../lib/mapFitPolicy'
 import type { MapFitState } from '../lib/mapFitPolicy';
 import { useSurveyStore } from '../store/surveyStore';
 import { getMarkerColor } from '../lib/markerColor';
+import { createPopupContent } from '../lib/parcelPopup';
 import {
   isInBonghwa,
   createCircleIcon,
   createStarIcon,
-  createPopupContent,
   parcelKey,
 } from '../components/Map/mapUtils';
 
