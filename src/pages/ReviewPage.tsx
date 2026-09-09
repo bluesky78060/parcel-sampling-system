@@ -9,7 +9,6 @@ import { MapLegend } from '../components/Map/MapLegend';
 import { useGeocoding } from '../hooks/useGeocoding';
 import type { Parcel } from '../types';
 import { isRepresentative, isPublicPayment } from '../lib/parcelCategory';
-import { applyGeocodedCoords } from '../lib/geocodeApply';
 import {
   buildMapSelectedParcels,
   buildTableParcels,
@@ -18,6 +17,7 @@ import {
   mergeWithRepresentatives,
 } from '../lib/reviewSelectors';
 import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
+import { runGeocodingAndCommit } from '../store/parcelCommit';
 
 type TabId = 'table' | 'map';
 
@@ -44,28 +44,22 @@ export function ReviewPage() {
 
   // 좌표 변환 (지도 탭에서 좌표 없을 때 사용)
   const geocoding = useGeocoding();
-  const parcelStore = useParcelStore();
 
   const noCoordsCount = useMemo(
     () => allParcels.filter((p) => !p.coords).length,
     [allParcels],
   );
 
+  // 결과 기입은 AnalyzePage와 같은 `runGeocodingAndCommit`이 한다.
+  //
+  // 예전에는 여기가 `allParcels`를 useCallback 의존성으로 갖고 있어 안전해
+  // 보였지만 아니었다. 의존성은 **다음 호출**이 받을 클로저를 새로 만들 뿐,
+  // 이미 await에 들어가 있는 호출이 붙잡은 배열은 바꾸지 않는다. 수 분짜리
+  // 변환 도중의 쓰기는 AnalyzePage와 똑같이 사라진다. 그래서 두 화면을
+  // 같은 규칙으로 맞춘다 — 기입 시점에 스토어를 다시 읽는다.
   const runGeocodingInReview = useCallback(async () => {
-    const eligibleParcels = allParcels.filter((p) => p.isEligible);
-    const allForGeocoding = [...eligibleParcels, ...representativeParcels];
-    if (allForGeocoding.length === 0) return;
-
-    const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
-
-    parcelStore.updateParcels(applyGeocodedCoords(allParcels, geocodedParcels));
-
-    if (representativeParcels.length > 0) {
-      parcelStore.setRepresentativeParcels(
-        applyGeocodedCoords(representativeParcels, geocodedParcels),
-      );
-    }
-  }, [allParcels, representativeParcels, geocoding, parcelStore]);
+    await runGeocodingAndCommit((parcels) => geocoding.startGeocoding(parcels));
+  }, [geocoding]);
 
   // ESC키로 전체화면 종료
   useEffect(() => {

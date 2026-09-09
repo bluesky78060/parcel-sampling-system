@@ -5,12 +5,11 @@ import { useParcelStore } from '../store/parcelStore';
 import { useExtractionStore } from '../store/extractionStore';
 import { useSurveyStore, sampledYearsOf } from '../store/surveyStore';
 import { applyColumnMapping } from '../lib/excelParser';
-import { applyGeocodedCoords } from '../lib/geocodeApply';
 import { markEligibility } from '../lib/duplicateDetector';
 import { findDistantRis, calculateRiCentroids, calculateCentroid, haversineDistance } from '../lib/spatialUtils';
 import { useGeocoding } from '../hooks/useGeocoding';
 import { clearGeocodeCache } from '../lib/kakaoGeocoder';
-import { generatePnuForParcels } from '../lib/pnuGenerator';
+import { generatePnuAndCommit, runGeocodingAndCommit } from '../store/parcelCommit';
 import { filterToTargetRegion, TARGET_REGION } from '../config/region';
 import { StatsDashboard } from '../components/Analysis/StatsDashboard';
 import { RiDistributionChart } from '../components/Analysis/RiDistributionChart';
@@ -211,36 +210,26 @@ export function AnalyzePage() {
   }, [masterFile, sampledFileByYear, representativeFile, parcelStore, extractionConfig.totalTarget]);
 
   // 좌표 변환 (사용자 수동 실행)
+  //
+  // 결과 기입은 `runGeocodingAndCommit`이 한다. 여기서 직접 스토어를 읽어
+  // 쓰면 안 된다 — `parcelStore`는 렌더 시점 스냅샷이라 수 분 걸리는 await
+  // 뒤에는 낡았고, `updateParcels`가 전체 교체라 그 사이의 쓰기를 전부
+  // 날린다(PROJ1-1-44에서 생성한 PNU가 통째로 사라졌다).
   const runGeocoding = useCallback(async () => {
     if (!geocoding.isAvailable) return;
     setAnalysisError(null);
 
     try {
-      // 공익직불제 eligible + 대표필지 모두 Geocoding 대상
-      const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
-      const repParcels = parcelStore.representativeParcels;
-      const allForGeocoding = [...eligibleParcels, ...repParcels];
-      if (allForGeocoding.length === 0) return;
-
-      const geocodedParcels = await geocoding.startGeocoding(allForGeocoding);
-
-      // 공익직불제 필지 좌표 업데이트
-      const updatedParcels = applyGeocodedCoords(parcelStore.allParcels, geocodedParcels);
-      parcelStore.updateParcels(updatedParcels);
-
-      // 대표필지 좌표 업데이트
-      if (repParcels.length > 0) {
-        const updatedRep = applyGeocodedCoords(repParcels, geocodedParcels);
-        parcelStore.setRepresentativeParcels(updatedRep);
-      }
-
-      computeDistantRis(updatedParcels);
+      const updatedParcels = await runGeocodingAndCommit((parcels) =>
+        geocoding.startGeocoding(parcels)
+      );
+      if (updatedParcels) computeDistantRis(updatedParcels);
     } catch (err) {
       const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
       console.warn('[분석] Geocoding 오류:', geoMessage);
       setAnalysisError(`좌표 변환 오류: ${geoMessage}\n(분석 결과와 추출 기능은 정상 작동합니다)`);
     }
-  }, [parcelStore, geocoding, computeDistantRis]);
+  }, [geocoding, computeDistantRis]);
 
   // 좌표 재변환 (캐시 초기화 후 강제 재실행)
   const rerunGeocoding = useCallback(async () => {
@@ -253,28 +242,16 @@ export function AnalyzePage() {
       await clearGeocodeCache();
       geocoding.resetState();
 
-      const eligibleParcels = parcelStore.allParcels.filter((p) => p.isEligible);
-      const repParcels = parcelStore.representativeParcels;
-      const allForGeocoding = [...eligibleParcels, ...repParcels];
-      if (allForGeocoding.length === 0) return;
-
-      const geocodedParcels = await geocoding.startGeocoding(allForGeocoding, true);
-
-      const updatedParcels = applyGeocodedCoords(parcelStore.allParcels, geocodedParcels);
-      parcelStore.updateParcels(updatedParcels);
-
-      if (repParcels.length > 0) {
-        const updatedRep = applyGeocodedCoords(repParcels, geocodedParcels);
-        parcelStore.setRepresentativeParcels(updatedRep);
-      }
-
-      computeDistantRis(updatedParcels);
+      const updatedParcels = await runGeocodingAndCommit((parcels) =>
+        geocoding.startGeocoding(parcels, true)
+      );
+      if (updatedParcels) computeDistantRis(updatedParcels);
     } catch (err) {
       const geoMessage = err instanceof Error ? err.message : 'Geocoding 중 오류';
       console.warn('[분석] Geocoding 재변환 오류:', geoMessage);
       setAnalysisError(`좌표 재변환 오류: ${geoMessage}`);
     }
-  }, [parcelStore, geocoding, computeDistantRis]);
+  }, [geocoding, computeDistantRis]);
 
   // PNU 코드 자동 생성
   const runPnuGeneration = useCallback((overwrite = false) => {
@@ -282,33 +259,11 @@ export function AnalyzePage() {
     setPnuGenResult(null);
 
     try {
-      // 공익직불제 필지 PNU 생성
-      const { updated: updatedAll, result: resultAll } = generatePnuForParcels(
-        parcelStore.allParcels,
-        overwrite
-      );
-      parcelStore.updateParcels(updatedAll);
-
-      // 대표필지 PNU 생성
-      let repGenerated = 0;
-      if (parcelStore.representativeParcels.length > 0) {
-        const { updated: updatedRep, result: resultRep } = generatePnuForParcels(
-          parcelStore.representativeParcels,
-          overwrite
-        );
-        parcelStore.setRepresentativeParcels(updatedRep);
-        repGenerated = resultRep.generated;
-      }
-
-      setPnuGenResult({
-        generated: resultAll.generated + repGenerated,
-        skipped: resultAll.skipped,
-        errors: [...new Set(resultAll.errors)].slice(0, 10),
-      });
+      setPnuGenResult(generatePnuAndCommit(overwrite));
     } finally {
       setIsGeneratingPnu(false);
     }
-  }, [parcelStore]);
+  }, []);
 
   // 이미 분석된 상태면 재분석 없이 바로 표시
   useEffect(() => {
@@ -488,13 +443,25 @@ export function AnalyzePage() {
                   <p className="text-xs text-indigo-600">
                     읍면동·리·본번·부번 정보로 19자리 PNU 코드를 생성합니다. (봉화군 전용)
                   </p>
+                  {/*
+                    좌표 변환이 도는 동안은 잠근다. 4만 필지 변환은 수 분 걸리는데
+                    그동안 PNU를 생성해 봐야 사용자에게는 두 작업이 동시에 도는
+                    것으로 보이고, 어느 쪽이 이겼는지 화면으로는 알 수 없다.
+                    (유실 자체는 parcelCommit이 사용 시점에 스토어를 읽어 막는다.
+                     이 잠금은 혼란을 줄이는 보조 수단이지 그 방어의 대체가 아니다.)
+                  */}
+                  {geocoding.state.isRunning && (
+                    <p className="text-xs text-indigo-500 mt-0.5">
+                      좌표 변환이 끝난 뒤에 생성할 수 있습니다.
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0 ml-4">
                 {pnuGenResult && (
                   <button
                     onClick={() => runPnuGeneration(true)}
-                    disabled={isGeneratingPnu}
+                    disabled={isGeneratingPnu || geocoding.state.isRunning}
                     className="inline-flex items-center gap-1.5 px-3 py-2 border border-indigo-300 text-indigo-700 text-sm font-medium rounded-lg hover:bg-indigo-100 disabled:opacity-50 transition-colors"
                   >
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -505,7 +472,7 @@ export function AnalyzePage() {
                 )}
                 <button
                   onClick={() => runPnuGeneration(false)}
-                  disabled={isGeneratingPnu}
+                  disabled={isGeneratingPnu || geocoding.state.isRunning}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
                 >
                   {isGeneratingPnu ? (
