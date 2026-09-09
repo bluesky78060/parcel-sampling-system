@@ -61,6 +61,30 @@ describe('normalizeEnvValue — 조합 오염', () => {
   });
 });
 
+/**
+ * 예전 상한은 8이었다. 임의로 고른 수라 넘어서는 순간 **경고 없이 오염된 값을
+ * 반환한다** — 2026-09-06 장애와 같은 "화면에 안 드러나는" 실패 모드다.
+ * 상한을 `v.length`로 바꾸면 "매 회 최소 한 글자가 줄어든다"는 사실에서
+ * 종료가 증명되고 미수렴이 원천적으로 사라진다. 여기서 고정하는 것은 그 사실이다.
+ */
+describe('normalizeEnvValue — 깊이에 상관없이 고정점에 닿는다', () => {
+  it.each([1, 5, 8, 9, 12, 40])('따옴표 %i겹', (depth) => {
+    expect(normalizeEnvValue('"'.repeat(depth) + KEY + '"'.repeat(depth))).toBe(KEY);
+  });
+
+  it('따옴표+공백을 번갈아 40겹', () => {
+    expect(normalizeEnvValue(` " `.repeat(40) + KEY + ` " `.repeat(40))).toBe(KEY);
+  });
+
+  it('결과는 언제나 고정점이다 — 한 번 더 돌려도 변하지 않는다', () => {
+    for (let depth = 0; depth <= 40; depth++) {
+      const once = normalizeEnvValue(`'"`.repeat(depth) + KEY + `"'`.repeat(depth));
+      expect(normalizeEnvValue(once)).toBe(once);
+      expect(once).toBe(KEY);
+    }
+  });
+});
+
 describe('readEnvKey — 세 키 모두 같은 정규화를 거친다', () => {
   it.each(['VITE_VWORLD_KEY', 'VITE_KAKAO_JS_KEY', 'VITE_KAKAO_REST_KEY'] as const)(
     '%s',
