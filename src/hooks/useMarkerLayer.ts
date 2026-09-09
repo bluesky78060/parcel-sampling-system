@@ -204,6 +204,11 @@ export function useMarkerLayer({
    * `surveyYear`가 없어서, 의존성 배열의 그 항목만 보고는 왜 있는지 알 수 없었고
    * (lint 기준으로는 오히려 불필요한 의존성이었다) 누가 지워도 이상해 보이지 않았다.
    * 이제 본문이 `surveyYear`를 실제로 쓰므로 lint가 지우는 것을 막는다.
+   *
+   * **테스트는 이것을 못 잡는다.** 이 저장소는 `environment: 'node'`라 훅을 렌더할 수
+   * 없어, 두 훅의 의존성 배열에서 `surveyYear`를 빼도 476건이 전부 통과한다 —
+   * 원리적으로 등가 변이다. 유일한 방어선이 lint이고, 실측하면 **warning 4 → 6**
+   * (훅당 1건: 여기와 `usePolygonLayer`)이다. 억지로 죽이려 테스트를 비틀지 않는다.
    */
   const surveyYear = useSurveyStore((st) => st.surveyYear);
 
