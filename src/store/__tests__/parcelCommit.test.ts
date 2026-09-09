@@ -228,6 +228,65 @@ describe('generatePnuAndCommit', () => {
     expect(useParcelStore.getState().representativeParcels[0].pnu).toBe(EXPECTED_PNU);
   });
 
+  /**
+   * **`generated`만 합치고 `skipped`·`errors`는 공익 쪽에서만 오던 문제.**
+   *
+   * 화면(`AnalyzePage`)은 이 요약을 그대로 찍는다 — 생성 n건 / 기존 유지 n건 /
+   * 매핑 실패 n건. 대표필지가 **매핑조차 안 됐는데** "생성 1건, 오류 없음"이
+   * 뜨면 담당자는 PNU가 다 채워진 줄 알고 다음 단계로 넘어간다.
+   *
+   * 이 함수는 새로 만든 **유일한 기입 지점**이므로 여기서 비대칭을 닫는다.
+   * 위의 `대표필지 생성분을 합쳐서 보고한다`는 `generated`만 단언해
+   * 비대칭을 절반만 못 박고 있었다.
+   */
+  it('대표필지의 건너뜀·오류를 삼키지 않는다', () => {
+    useParcelStore.setState({
+      allParcels: [makeParcel({ pnu: '' })], // 정상 — 생성된다
+      representativeParcels: [
+        // 매핑 불가 — errors에 잡혀야 한다
+        makeParcel({
+          pnu: '', eubmyeondong: '없는면', ri: '없는리',
+          address: '없는면 없는리 1', parcelCategory: 'representative',
+        }),
+        // 이미 PNU 보유 — skipped에 잡혀야 한다
+        makeParcel({ pnu: '기존PNU', parcelCategory: 'representative' }),
+      ],
+    });
+
+    const summary = generatePnuAndCommit(false);
+
+    expect(summary.generated).toBe(1);
+    expect(summary.skipped).toBe(1);
+    expect(summary.errors).toEqual(['(없는면, 없는리) 매핑 없음']);
+  });
+
+  /** 양쪽 오류를 합치되, 같은 리가 양쪽에 있으면 한 줄로 접는다. */
+  it('공익·대표필지 양쪽 오류를 합치고 중복을 접는다', () => {
+    const unknown = (over = {}) =>
+      makeParcel({
+        pnu: '', eubmyeondong: '없는면', ri: '없는리',
+        address: '없는면 없는리 1', ...over,
+      });
+    useParcelStore.setState({
+      allParcels: [unknown()],
+      representativeParcels: [
+        unknown({ parcelCategory: 'representative' }), // 공익 쪽과 같은 리 — 접힌다
+        makeParcel({
+          pnu: '', eubmyeondong: '딴면', ri: '딴리',
+          address: '딴면 딴리 1', parcelCategory: 'representative',
+        }),
+      ],
+    });
+
+    const summary = generatePnuAndCommit(false);
+
+    expect(summary.generated).toBe(0);
+    expect(summary.errors).toEqual([
+      '(없는면, 없는리) 매핑 없음',
+      '(딴면, 딴리) 매핑 없음',
+    ]);
+  });
+
   it('매핑에 없는 리는 오류로 모으고 중복을 접는다', () => {
     const unknown = () =>
       makeParcel({ pnu: '', eubmyeondong: '없는면', ri: '없는리', address: '없는면 없는리 1' });
