@@ -6,6 +6,7 @@ const KEY = 'EF3461DD-F7B1-4E6B-8A6B-2DFBA5196EF0';
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe('normalizeEnvValue — 조합 오염', () => {
@@ -72,6 +73,70 @@ describe('readEnvKey — 세 키 모두 같은 정규화를 거친다', () => {
   it('미설정이면 빈 문자열', () => {
     vi.stubEnv('VITE_VWORLD_KEY', '');
     expect(readEnvKey('VITE_VWORLD_KEY')).toBe('');
+  });
+});
+
+/**
+ * `readEnvKey`가 **존재한다는 것**과 호출부가 **그것을 쓴다는 것**은 다른 사실이다.
+ * 실측: `kakaoGeocoder.ts`의 `KAKAO_REST_USABLE`·Kakao 폴백 키, `useKakaoMap.ts`의
+ * JS 키 — 세 호출부를 전부 날것 `import.meta.env` 읽기로 되돌려도 기존 476건이
+ * **하나도 죽지 않았다.** 위 describe들은 `normalizeEnvValue`/`readEnvKey`만 고정할 뿐
+ * "그 통로를 실제로 거치는가"는 아무도 보지 않기 때문이다.
+ *
+ * `import.meta.env.DEV`가 vitest(node)에서 `true`라 `KAKAO_REST_USABLE`이 관측된다.
+ * 다만 그것은 **모듈 최상위 상수**라 import 시점에 굳으므로, 환경변수를 갈아끼운 뒤
+ * `vi.resetModules()` + 동적 import로 모듈을 다시 평가해야 값이 바뀐다.
+ *
+ * **덮지 못한 곳**: `useKakaoMap.ts`의 `VITE_KAKAO_JS_KEY`. 그 키를 읽는
+ * `loadKakaoMapSDK`는 export되지 않고 `window`·`document.createElement`를 요구하는데
+ * 이 스위트의 환경은 node라 DOM이 없다. jsdom 프로젝트를 따로 붙이기 전까지는
+ * 그 호출부만 회귀 방지 밖에 남는다.
+ */
+describe('호출부가 실제로 readEnvKey를 거치는가', () => {
+  const BAD_ADDRESS = '경상북도 봉화군 봉화읍 내성리 1';
+
+  it('공백뿐인 Kakao REST 키는 "키 있음"으로 세지 않는다 — KAKAO_REST_USABLE', async () => {
+    vi.stubEnv('VITE_VWORLD_KEY', '');
+    vi.stubEnv('VITE_KAKAO_REST_KEY', '   ');
+    vi.resetModules();
+    const m = await import('../kakaoGeocoder');
+
+    // 날것으로 읽으면 `!!'   '`가 true라 여기서 'kakao'/true가 나온다.
+    expect(m.getGeocodingProvider()).toBe(null);
+    expect(m.isGeocodingAvailable()).toBe(false);
+  });
+
+  it('공백뿐인 Kakao REST 키로는 폴백 요청을 아예 보내지 않는다', async () => {
+    vi.stubEnv('VITE_VWORLD_KEY', '');
+    vi.stubEnv('VITE_KAKAO_REST_KEY', '   ');
+    vi.resetModules();
+    const fetchSpy = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response('{"documents":[]}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = await import('../kakaoGeocoder');
+
+    await expect(m.geocodeAddress(BAD_ADDRESS)).resolves.toBe(null);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('조합 오염된 Kakao REST 키는 Authorization 헤더에 정규화돼 실린다', async () => {
+    vi.stubEnv('VITE_VWORLD_KEY', '');
+    vi.stubEnv('VITE_KAKAO_REST_KEY', `" ${KEY}"`);
+    vi.resetModules();
+    const fetchSpy = vi.fn<typeof fetch>().mockImplementation(
+      async () => new Response('{"documents":[]}', { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+    const m = await import('../kakaoGeocoder');
+
+    await m.geocodeAddress(BAD_ADDRESS);
+
+    expect(fetchSpy).toHaveBeenCalled();
+    const init = fetchSpy.mock.calls[0][1];
+    const auth = (init?.headers as Record<string, string>).Authorization;
+    // 날것으로 읽으면 `KakaoAK " EF34…"`가 그대로 실려 인증이 깨진다.
+    expect(auth).toBe(`KakaoAK ${KEY}`);
   });
 });
 
