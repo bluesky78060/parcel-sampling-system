@@ -4,6 +4,7 @@ import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
 import { jsonp, JsonpNetworkError, JsonpTimeoutError } from './jsonp';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from './bonghwaBounds';
 import { riCodePrefix } from './pnuGenerator';
+import { readEnvKey } from './envKeys';
 
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
@@ -74,7 +75,7 @@ const KAKAO_ADDRESS_URL = '/api/kakao/v2/local/search/address.json';
 const KAKAO_KEYWORD_URL = '/api/kakao/v2/local/search/keyword.json';
 
 // Kakao REST 사용 가능 여부 판정은 이 상수 한 곳에서만 한다.
-const KAKAO_REST_USABLE = isDev && !!import.meta.env.VITE_KAKAO_REST_KEY;
+const KAKAO_REST_USABLE = isDev && !!readEnvKey('VITE_KAKAO_REST_KEY');
 
 // VWORLD API (국토교통부)
 // 주의: VWORLD는 Access-Control-Allow-Origin 헤더를 보내지 않는다. fetch로 부르면
@@ -87,17 +88,11 @@ const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
 /**
  * VWORLD 인증키. 반드시 이 함수를 거쳐 읽는다.
  *
- * 2026-09-06 프로덕션 장애: GitHub Secret에 키를 넣을 때 앞에 공백이 들어갔고,
- * 빌드가 `" EF3461DD-…"`를 그대로 번들에 박았다. URL에 실리면 `key=+EF3461DD-…`가
- * 되어(`+`는 공백) VWORLD가 전 요청에 `INVALID_KEY 등록되지 않은 인증키입니다`를
- * 돌려줬다. 4만 건이 통째로 실패했고, 원인이 화면에 드러나지 않아 한참을 헤맸다.
- *
- * 환경변수는 사람이 복사·붙여넣기로 채우는 값이므로 앞뒤 공백·따옴표를 걷어낸다.
+ * 정규화(공백·따옴표 제거)는 `lib/envKeys`의 `readEnvKey` 하나에만 있다.
+ * 2026-09-06 프로덕션 장애의 경위와 조합 오염을 왜 반복 처리로 걷는지는 거기 적어뒀다.
  */
 export function getVworldKey(): string {
-  const raw = import.meta.env.VITE_VWORLD_KEY;
-  if (!raw) return '';
-  return String(raw).trim().replace(/^["']|["']$/g, '');
+  return readEnvKey('VITE_VWORLD_KEY');
 }
 
 /** VWORLD 응답 공통 형태 */
@@ -535,7 +530,7 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   }
 
   // Kakao 폴백 (dev 프록시에서만 동작)
-  const kakaoKey = import.meta.env.VITE_KAKAO_REST_KEY;
+  const kakaoKey = readEnvKey('VITE_KAKAO_REST_KEY');
   if (KAKAO_REST_USABLE && kakaoKey) {
     const result = await geocodeKakao(address, kakaoKey);
     if (result && isValidBonghwaCoord(result)) {

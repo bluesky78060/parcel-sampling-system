@@ -1,0 +1,73 @@
+/**
+ * 환경변수로 들어오는 API 키를 읽는 **유일한 통로.**
+ *
+ * 2026-09-06 프로덕션 장애: GitHub Secret에 VWORLD 키를 넣을 때 앞에 공백이 들어갔고,
+ * 빌드가 `" EF3461DD-…"`를 그대로 번들에 박았다. URL에 실리면 `key=+EF3461DD-…`가
+ * 되어(`+`는 공백) VWORLD가 전 요청에 `INVALID_KEY 등록되지 않은 인증키입니다`를
+ * 돌려줬다. 4만 건이 통째로 실패했고, 원인이 화면에 드러나지 않아 한참을 헤맸다.
+ *
+ * 그때 붙인 수정은 `trim()` 한 번 뒤에 따옴표를 걷는 **한 방향 파이프라인**이었다.
+ * 오염이 하나뿐일 때는 통하지만 **조합되면 뚫린다**:
+ *
+ *   `" EF3461DD-…"`  (따옴표로 감싸고 **안쪽에** 앞 공백)
+ *     1. `trim()`      → 바깥에 공백이 없어 무변화
+ *     2. 따옴표 제거   → 따옴표만 빠지고 **앞 공백이 살아남는다**
+ *     3. 결과 `" EF34…"` → `key=+EF34…` → 같은 장애가 그대로 재발한다
+ *
+ * 당시 "8개 입력 전수 확인"이라고 적었지만 8개가 전부 **단일 오염**이라 이 조합이
+ * 표본에서 빠져 있었다. 그래서 여기서는 순서를 고르지 않고 **더 이상 변하지 않을
+ * 때까지 반복한다.** 어느 층이 먼저 오든 결과가 같아진다.
+ *
+ * ---
+ * **왜 이름이 아니라 표를 두는가.** `import.meta.env[name]`처럼 동적으로 읽으면
+ * 정적 치환이 깨진다. Vite도, `scripts/`의 esbuild 하네스도
+ * `'import.meta.env.VITE_VWORLD_KEY'`라는 **멤버 표현식 문자열 그대로**를 치환한다
+ * (`scripts/geocoding-failure-sim/build.mjs`의 `define` 참조). 동적 접근으로 바꾸면
+ * 치환이 일어나지 않고, 그 번들에서는 `import.meta.env` 자체가 `undefined`라
+ * 모듈 로드 시점에 TypeError가 난다.
+ *
+ * **왜 값이 아니라 게터를 담는가.** 위 하네스들은 `VITE_VWORLD_KEY`와
+ * `VITE_KAKAO_REST_KEY`만 정의한다. 표에 값을 바로 담으면 모듈 초기화 때
+ * `VITE_KAKAO_JS_KEY`를 읽다가 그 번들이 통째로 죽는다. 게터로 감싸두면
+ * 실제로 그 키를 쓰는 코드가 부를 때만 읽으므로 지도 코드를 안 싣는 하네스는
+ * 영향을 받지 않는다.
+ */
+const ENV_READERS = {
+  VITE_VWORLD_KEY: () => import.meta.env.VITE_VWORLD_KEY,
+  VITE_KAKAO_JS_KEY: () => import.meta.env.VITE_KAKAO_JS_KEY,
+  VITE_KAKAO_REST_KEY: () => import.meta.env.VITE_KAKAO_REST_KEY,
+} as const;
+
+export type EnvKeyName = keyof typeof ENV_READERS;
+
+/**
+ * 공백·따옴표를 **안정될 때까지** 걷어낸다.
+ *
+ * 한 번만 돌면 `" KEY"`(따옴표 안쪽 공백)나 `' "KEY" '`(공백 바깥 따옴표)에서
+ * 한 층이 남는다. 반복 횟수를 묶어두는 이유는 오직 병적 입력에서 멈추지 않는 일을
+ * 막기 위해서다 — 매 회 최소 한 글자가 줄어들므로 실무 입력은 두세 번이면 끝난다.
+ *
+ * 짝이 맞지 않는 따옴표(`"KEY`)도 걷는다. 예전 동작 그대로다: 키 값에 따옴표가
+ * 의미를 갖는 경우는 없고, 붙어 있으면 그대로 URL에 실려 인증이 깨진다.
+ */
+export function normalizeEnvValue(raw: unknown): string {
+  if (raw == null) return '';
+  let v = String(raw);
+  for (let i = 0; i < 8; i++) {
+    const next = v.trim().replace(/^["']|["']$/g, '');
+    if (next === v) break;
+    v = next;
+  }
+  return v;
+}
+
+/**
+ * 환경변수 키를 정규화해 읽는다. 값이 없으면 빈 문자열.
+ *
+ * **API 키는 반드시 이 함수를 거쳐 읽는다.** 호출부마다 정규화를 복사하면
+ * 한 곳만 고쳐지고 나머지는 그대로 남는다 — 실제로 VWORLD만 정규화돼 있고
+ * Kakao 두 키는 날것으로 읽히고 있었다.
+ */
+export function readEnvKey(name: EnvKeyName): string {
+  return normalizeEnvValue(ENV_READERS[name]());
+}
