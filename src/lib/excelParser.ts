@@ -187,7 +187,16 @@ export function applyColumnMapping(
   category: ParcelCategory = 'public-payment'
 ): Parcel[] {
   const parcels = rows.map(row => {
-    let address = mapping.address ? String(row[mapping.address] ?? '').trim() : '';
+    // 주소 컬럼이 있으면 **끝의 지번만** 조립 경로와 같은 표기로 맞춘다.
+    //
+    // 예전에는 여기만 원본 셀 그대로였다. 조립 경로에 정규화를 넣은 뒤로
+    // **주소 컬럼 파일과 조립 주소 파일이 서로 어긋났다** — `parcelMatchKey`가
+    // `${address}__${parcelId}`이므로 `…운계리 0165-1__165-1` 대
+    // `…운계리 165-1__165-1`이 되어, 고치기 전에는 맞던 것이 안 맞게 됐다.
+    // 실측으로 4/4 회귀 확인(PROJ1-1-31 리뷰). 두 경로가 같은 함수를 타야 한다.
+    let address = mapping.address
+      ? normalizeAddressTail(String(row[mapping.address] ?? '').trim())
+      : '';
 
     // 필지주소가 비어있으면 분리된 주소 컬럼에서 조립
     if (!address) {
@@ -453,6 +462,22 @@ function normalizeId(id: string): string {
  * 숫자 지번 꼴이 아니면(빈 값, 문자 섞임 등) 손대지 않고 `normalizeId`로 넘긴다.
  * 알 수 없는 표기를 억지로 고쳐 원본을 훼손하는 것보다 그대로 두는 편이 안전하다.
  */
+/**
+ * 주소 문자열 **끝의 지번**을 `normalizeLotId`와 같은 표기로 맞춘다.
+ *
+ * `addressParser.normalizeAddressLotNumber`와 목적이 같지만 결과가 미세하게 다르다
+ * (`산 0056`을 그쪽은 `산 56`, 이쪽은 `산56`). 그쪽은 지오코딩 조회용이라 건드리지
+ * 않고, 여기서는 **`parcelId`와 한 글자도 어긋나지 않는 것**이 목적이므로
+ * `normalizeLotId`에 그대로 위임한다 — 공식이 둘이면 다시 갈린다.
+ */
+function normalizeAddressTail(address: string): string {
+  return address.replace(
+    /(\s)(산\s*)?(\d+(?:\s*-\s*\d+)?)\s*$/,
+    (_m, space: string, san: string | undefined, lot: string) =>
+      `${space}${normalizeLotId(`${san ?? ''}${lot}`)}`,
+  );
+}
+
 function normalizeLotId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed) return '';
