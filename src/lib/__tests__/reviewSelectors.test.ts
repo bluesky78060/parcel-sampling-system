@@ -8,6 +8,7 @@ import {
   mergeWithRepresentatives,
 } from '../reviewSelectors';
 import { isRepresentative } from '../parcelCategory';
+import { keySetOf, parcelMatchKey } from '../parcelKey';
 import { makeParcel } from './factories';
 
 /**
@@ -39,11 +40,26 @@ const beopJeon = (over = {}) =>
   });
 
 /**
- * `useMarkerLayer`가 대표필지를 세는 술어를 그대로 복제한다(필터·경계 게이트 제외).
+ * `useMarkerLayer`의 마커 계수 술어를 그대로 복제한다(필터·경계 게이트 제외).
  * 훅은 DOM을 요구해 node에서 렌더할 수 없으므로, 계수 조건만 떼어 범례와 대조한다.
+ *
+ * **배타 체인의 순서가 원본과 같아야 한다** — 대표필지를 `isSelected` 판정보다 먼저
+ * 세는 것이 그쪽 동작이고, 순서를 바꾸면 겹치는 대표필지가 `selected`로 흘러간다.
  */
-const badgeRepresentativeCount = (mapParcels: Parcel[]) =>
-  mapParcels.filter((p) => p.coords && isRepresentative(p)).length;
+const badgeCounts = (mapParcels: Parcel[], selectedParcels: Parcel[]) => {
+  const selectedKeys = keySetOf(selectedParcels, parcelMatchKey);
+  let rep = 0;
+  let sel = 0;
+  let uns = 0;
+  for (const p of mapParcels) {
+    if (!p.coords) continue;
+    const key = parcelMatchKey(p);
+    if (isRepresentative(p)) rep++;
+    else if (key !== null && selectedKeys.has(key)) sel++;
+    else uns++;
+  }
+  return { rep, sel, uns };
+};
 
 /** 기채취 연도 두 개(최근순). 아래 여러 describe가 공유한다 */
 const SAMPLED_YEARS: readonly [number, number] = [2025, 2024];
@@ -109,10 +125,17 @@ describe('mergeWithRepresentatives', () => {
     const mapParcels = mergeWithRepresentatives(master, reps);
     const counts = countMapLegend(master, reps, selected, SAMPLED_YEARS, true);
 
-    expect(badgeRepresentativeCount(mapParcels)).toBe(3);
+    const badge = badgeCounts(mapParcels, selected);
+    expect(badge.rep).toBe(3);
     expect(counts.representative).toBe(3);
     // 꺼진 모드에서는 초과분도 지도에 있으므로 "결과 제외" 줄이 나오지 않는다
     expect(counts.representativeExcluded).toBe(0);
+
+    // 겹치는 대표필지는 예전에 배지에서 `selected`로 세어졌는데(isRep이 거짓이라
+    // 배타 체인의 다음 가지로 갔다) 범례는 `repKeys`로 건너뛰고 있었다.
+    // 즉 `선택` 숫자도 겹친 만큼 어긋나 있었다. 대표 수만 단언하면 그 축이 무보호다.
+    expect(badge.sel).toBe(counts.selected);
+    expect(badge.uns).toBe(counts.unselected);
   });
 
   it('겹침이 없을 때도 두 수가 같다', () => {
@@ -122,10 +145,14 @@ describe('mergeWithRepresentatives', () => {
       makeParcel({ pnu: 'R2', coords: IN, parcelCategory: 'representative' }),
       makeParcel({ pnu: 'R3', coords: IN, parcelCategory: 'representative' }),
     ];
+    const selected = [reps[0]];
     const mapParcels = mergeWithRepresentatives(master, reps);
-    const counts = countMapLegend(master, reps, [reps[0]], SAMPLED_YEARS, true);
-    expect(badgeRepresentativeCount(mapParcels)).toBe(2);
+    const counts = countMapLegend(master, reps, selected, SAMPLED_YEARS, true);
+    const badge = badgeCounts(mapParcels, selected);
+    expect(badge.rep).toBe(2);
     expect(counts.representative).toBe(2);
+    expect(badge.sel).toBe(counts.selected);
+    expect(badge.uns).toBe(counts.unselected);
   });
 
   /**
