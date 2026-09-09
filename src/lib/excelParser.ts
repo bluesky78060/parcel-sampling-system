@@ -187,7 +187,16 @@ export function applyColumnMapping(
   category: ParcelCategory = 'public-payment'
 ): Parcel[] {
   const parcels = rows.map(row => {
-    let address = mapping.address ? String(row[mapping.address] ?? '').trim() : '';
+    // 주소 컬럼이 있으면 **끝의 지번만** 조립 경로와 같은 표기로 맞춘다.
+    //
+    // 예전에는 여기만 원본 셀 그대로였다. 조립 경로에 정규화를 넣은 뒤로
+    // **주소 컬럼 파일과 조립 주소 파일이 서로 어긋났다** — `parcelMatchKey`가
+    // `${address}__${parcelId}`이므로 `…운계리 0165-1__165-1` 대
+    // `…운계리 165-1__165-1`이 되어, 고치기 전에는 맞던 것이 안 맞게 됐다.
+    // 실측으로 4/4 회귀 확인(PROJ1-1-31 리뷰). 두 경로가 같은 함수를 타야 한다.
+    let address = mapping.address
+      ? normalizeAddressTail(String(row[mapping.address] ?? '').trim())
+      : '';
 
     // 필지주소가 비어있으면 분리된 주소 컬럼에서 조립
     if (!address) {
@@ -210,13 +219,19 @@ export function applyColumnMapping(
       }
       // 지번 추가 — 본번/부번이 분리돼 있으면 결합하고, 통합 필지번호면 그대로 쓴다.
       // 지번이 빠지면 조립 주소가 리(里)에서 끝나 지오코딩이 리 중심점을 찍는다.
-      const mainNum = mapping.mainLotNum ? String(row[mapping.mainLotNum] ?? '').trim() : '';
-      const subNum = mapping.subLotNum ? String(row[mapping.subLotNum] ?? '').trim() : '';
-      if (mainNum) {
-        const lotStr = subNum && subNum !== '0' ? `${mainNum}-${subNum}` : mainNum;
-        parts.push(lotStr);
+      //
+      // **아래 `parcelId`와 같은 정규화를 거친다.** 예전에는 여기만 원본 셀을 그대로
+      // 썼고 `parcelId`는 `normalizeId`를 거쳐, 한 행 안에서 지번 표기가 갈렸다
+      // (`… 운계리 0165-0001` vs `165-0001`). 그러면 `parcelMatchKey`의
+      // `${address}__${parcelId}` 두 조각이 **모두** 다른 파일과 어긋나고,
+      // 조립 주소가 0패딩째로 지오코딩에 들어간다.
+      const mainNum = mapping.mainLotNum ? String(row[mapping.mainLotNum] ?? '') : '';
+      const subNum = mapping.subLotNum ? String(row[mapping.subLotNum] ?? '') : '';
+      if (mainNum.trim()) {
+        const lotStr = buildParcelId(normalizeLotId(mainNum), normalizeLotId(subNum));
+        if (lotStr) parts.push(lotStr);
       } else if (mapping.parcelId) {
-        const lot = String(row[mapping.parcelId] ?? '').trim();
+        const lot = normalizeLotId(String(row[mapping.parcelId] ?? ''));
         if (lot) parts.push(lot);
       }
       address = parts.join(' ');
@@ -229,12 +244,14 @@ export function applyColumnMapping(
     let parcelId: string;
     if (mapping.parcelIdMode === 'split' && mapping.mainLotNum) {
       // 2024/2025 기채취 파일: 본번·부번 별도 컬럼 결합
-      const mainNum = normalizeId(String(row[mapping.mainLotNum] ?? ''));
-      const subNum = mapping.subLotNum ? normalizeId(String(row[mapping.subLotNum] ?? '')) : '';
+      const mainNum = normalizeLotId(String(row[mapping.mainLotNum] ?? ''));
+      const subNum = mapping.subLotNum ? normalizeLotId(String(row[mapping.subLotNum] ?? '')) : '';
       parcelId = buildParcelId(mainNum, subNum);
     } else if (mapping.parcelId) {
-      // 마스터 파일: 필지번호 컬럼 직접 사용
-      parcelId = normalizeId(String(row[mapping.parcelId] ?? ''));
+      // 마스터 파일: 필지번호 컬럼 직접 사용.
+      // 통합 표기(`'0165-0001'`)는 본번·부번을 각각 정규화해야 `'165-1'`이 된다 —
+      // `normalizeId`는 맨 앞 0만 떼서 `'165-0001'`을 남긴다.
+      parcelId = normalizeLotId(String(row[mapping.parcelId] ?? ''));
     } else {
       // 필지번호 컬럼 없음: 주소에서 본번/부번 자동 추출
       const { mainLotNum, subLotNum } = parseLotNumber(address);
@@ -245,8 +262,8 @@ export function applyColumnMapping(
     let mainLotNum: string;
     let subLotNum: string;
     if (mapping.parcelIdMode === 'split' && mapping.mainLotNum) {
-      mainLotNum = normalizeId(String(row[mapping.mainLotNum] ?? ''));
-      subLotNum = mapping.subLotNum ? normalizeId(String(row[mapping.subLotNum] ?? '')) : '';
+      mainLotNum = normalizeLotId(String(row[mapping.mainLotNum] ?? ''));
+      subLotNum = mapping.subLotNum ? normalizeLotId(String(row[mapping.subLotNum] ?? '')) : '';
     } else {
       // 주소 또는 통합 필지번호에서 추출
       const lotFromAddr = parseLotNumber(address);
@@ -401,10 +418,73 @@ function extractPnu(row: Record<string, unknown>, mapping: ColumnMapping): strin
   return undefined;
 }
 
+/**
+ * 식별자에서 선행 0을 뗀다. **경영체번호 전용으로 남긴다.**
+ *
+ * `replace(/^0+/, '')`는 문자열 **맨 앞의 0만** 뗀다. 지번에 쓰면 부번이 그대로
+ * 남아(`'0165-0001'` → `'165-0001'`) 같은 필지가 파일마다 다른 키를 갖는다.
+ * 지번은 아래 `normalizeLotId`를 쓴다.
+ *
+ * **왜 이 함수 자체를 고치지 않았는가.** 경영체번호에도 같은 함수가 쓰인다.
+ * 하이픈을 본번·부번으로 갈라 각각 0을 떼는 규칙을 여기에 넣으면
+ * `'0012-0034'`가 `'12-34'`가 된다 — 지번에서는 옳지만 경영체번호에서는
+ * **다른 번호로 바꿔치기하는 것**이다. 두 값은 형태가 우연히 비슷할 뿐 규칙이
+ * 다르므로, 공용 함수를 지번 쪽으로 기울이면 그 대가를 경영체번호가 조용히 치른다.
+ * (`parcelKey.hasFarmerId`가 `normalizeId('000') === '0'`이 truthy인 것에 기대고
+ * 있으므로 그 동작도 그대로 둔다.)
+ */
 function normalizeId(id: string): string {
   const trimmed = id.trim();
   if (!trimmed) return '';
   const stripped = trimmed.replace(/^0+/, '');
   // 전부 0이면 '0' 반환 (예: "00" → "0", "000" → "0")
   return stripped || '0';
+}
+
+/**
+ * 지번(본번-부번) 표기를 정규화한다.
+ *
+ * 일부 원본 파일은 지번을 0으로 채워 내보낸다(`'0165-0001'`). 본번·부번을
+ * **각각** 처리해야 `'165-1'`이 된다 — `normalizeId` 하나로는 맨 앞 0만 떨어져
+ * `'165-0001'`이 남는다.
+ *
+ * 부번을 떼는 규칙은 `buildParcelId`에 이미 있으므로 그것을 쓴다(`'0'`, `'00'`,
+ * `'0000'` 전부 영-부번으로 본다). 결과 표기는 `addressParser.normalizeAddressLotNumber`
+ * 가 주소 끝에서 하는 것과 같다 — 한 행의 주소와 지번이 갈리지 않으려면 두 규칙이
+ * 같아야 한다.
+ *
+ *   '0165-0001' → '165-1'
+ *   '0165-0000' → '165'
+ *   '1043-2'    → '1043-2'  (변화 없음)
+ *   '산0056'    → '산56'
+ *   '산 0056'   → '산56'
+ *
+ * 숫자 지번 꼴이 아니면(빈 값, 문자 섞임 등) 손대지 않고 `normalizeId`로 넘긴다.
+ * 알 수 없는 표기를 억지로 고쳐 원본을 훼손하는 것보다 그대로 두는 편이 안전하다.
+ */
+/**
+ * 주소 문자열 **끝의 지번**을 `normalizeLotId`와 같은 표기로 맞춘다.
+ *
+ * `addressParser.normalizeAddressLotNumber`와 목적이 같지만 결과가 미세하게 다르다
+ * (`산 0056`을 그쪽은 `산 56`, 이쪽은 `산56`). 그쪽은 지오코딩 조회용이라 건드리지
+ * 않고, 여기서는 **`parcelId`와 한 글자도 어긋나지 않는 것**이 목적이므로
+ * `normalizeLotId`에 그대로 위임한다 — 공식이 둘이면 다시 갈린다.
+ */
+function normalizeAddressTail(address: string): string {
+  return address.replace(
+    /(\s)(산\s*)?(\d+(?:\s*-\s*\d+)?)\s*$/,
+    (_m, space: string, san: string | undefined, lot: string) =>
+      `${space}${normalizeLotId(`${san ?? ''}${lot}`)}`,
+  );
+}
+
+function normalizeLotId(id: string): string {
+  const trimmed = id.trim();
+  if (!trimmed) return '';
+  const m = trimmed.match(/^(산\s*)?(\d+)(?:\s*-\s*(\d+))?$/);
+  if (!m) return normalizeId(trimmed);
+  const san = m[1] ? '산' : '';
+  const main = normalizeId(m[2]);
+  const sub = m[3] === undefined ? '' : normalizeId(m[3]);
+  return buildParcelId(`${san}${main}`, sub);
 }
