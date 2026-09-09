@@ -24,6 +24,60 @@ export function getSheetNames(file: File): Promise<string[]> {
 }
 
 /**
+ * `XLSX.read` 옵션 — **파서와 테스트가 이것 하나를 공유한다.**
+ *
+ * 예전에는 `codepage: 949`(EUC-KR)를 함께 넘겼다. **아무 일도 하지 않았다.**
+ * 코드페이지 테이블은 `xlsx.js`(CJS)만 자동 로드하고 `xlsx.mjs`(ESM)는 안 하는데,
+ * Vite는 `xlsx.mjs`를 쓴다. 0.18.5에서도 마찬가지였음을 두 버전의 `.mjs`에 CP949
+ * CSV를 직접 먹여 확인했다 — 양쪽 다 `°æ¿µÃ¼¹øÈ£`로 깨진다.
+ *
+ * 그 상태로 두면 0.20.3이 새로 넣은 경고가 **파일 하나당 두 번** 콘솔에 찍혀,
+ * 나중에 다른 버그를 쫓는 사람을 엉뚱한 데로 보낸다. 실측으로 죽은 것이 확인됐으니
+ * 옵션을 지운다 — 코드가 거짓말을 멈춘다. CP949를 실제로 지원할지는 PROJ1-1-47.
+ */
+const READ_OPTS = { type: 'array' } as const;
+
+/**
+ * `sheet_to_json` 옵션 — **하류가 전제하는 계약이라 여기 하나만 둔다.**
+ *
+ * `raw: false`  숫자 셀도 문자열로 온다. `parseArea`·`normalizeId`가 그것을 전제한다
+ * `defval: ''`  빈 셀이 사라지지 않는다. 사라지면 헤더 합집합이 어긋난다
+ *
+ * 테스트가 이 상수를 함께 쓴다. 예전에는 테스트가 옵션을 **다시 선언**해서,
+ * 파서 쪽 옵션을 통째로 지워도 346건이 전부 통과했다(리뷰 실측).
+ */
+export const SHEET_TO_JSON_OPTS = { defval: '', raw: false } as const;
+
+/**
+ * 워크북에서 시트를 안전하게 꺼낸다.
+ *
+ * `workbook.Sheets[name]`을 그냥 쓰면 **없는 시트가 있는 것처럼 보인다.**
+ * 시트 이름이 `__proto__`인 파일은 `Sheets`의 프로토타입이 워크시트로 바뀌어
+ * 조회가 성공하고, 그 프로토타입의 키가 `!ref`·`A1`·`A2`…이므로 **`A1`이라는
+ * 이름의 시트를 요청하면 셀 객체가 시트인 척 넘어온다**(그리고 `!ref`가 없어
+ * 조용히 0행이 된다).
+ *
+ * PROJ1-1-8에서 "own 키가 안 생기니 크게 실패해 안전하다"고 적었는데 **정반대였다** —
+ * 리뷰가 실행으로 뒤집었다. own 키로만 찾으면 그 주장이 비로소 사실이 된다.
+ */
+export function getSheet(workbook: XLSX.WorkBook, name: string): XLSX.WorkSheet | undefined {
+  return Object.prototype.hasOwnProperty.call(workbook.Sheets, name)
+    ? workbook.Sheets[name]
+    : undefined;
+}
+
+/**
+ * 시트 하나를 행 배열로 편다. `parseExcelSheets`의 순수 구간.
+ *
+ * `FileReader` 밖으로 꺼내 둔 이유는 node에서 테스트하기 위해서다 —
+ * 이것이 없으면 그물이 라이브러리만 지키고 우리 호출부는 안 지킨다.
+ */
+export function rowsFromSheet(sheet: XLSX.WorkSheet): Record<string, unknown>[] {
+  const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, SHEET_TO_JSON_OPTS);
+  return jsonData.filter((row) => Object.values(row).some((v) => v !== '' && v != null));
+}
+
+/**
  * 시트별 행 수를 미리 조회 (시트 선택 UI에서 보조 시트를 걸러내기 위함)
  */
 export function getSheetRowCounts(file: File): Promise<Record<string, number>> {
@@ -32,11 +86,11 @@ export function getSheetRowCounts(file: File): Promise<Record<string, number>> {
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array', codepage: 949 });
+        const workbook = XLSX.read(data, READ_OPTS);
         const counts: Record<string, number> = {};
         for (const name of workbook.SheetNames) {
           // !ref 로 대략적인 행 수만 센다 (전 시트를 JSON으로 펼치면 느리다)
-          const ref = workbook.Sheets[name]?.['!ref'];
+          const ref = getSheet(workbook, name)?.['!ref'];
           const range = ref ? XLSX.utils.decode_range(ref) : null;
           // 헤더 1행 제외
           counts[name] = range ? Math.max(0, range.e.r - range.s.r) : 0;
@@ -65,7 +119,7 @@ export function parseExcelSheets(
     reader.onload = (e) => {
       try {
         const data = new Uint8Array(e.target!.result as ArrayBuffer);
-        const workbook = XLSX.read(data, { type: 'array', codepage: 949 });
+        const workbook = XLSX.read(data, READ_OPTS);
 
         const headerOrder: string[] = [];
         const headerSet = new Set<string>();
@@ -73,19 +127,13 @@ export function parseExcelSheets(
         const perSheet: Record<string, number> = {};
 
         for (const name of sheetNames) {
-          const sheet = workbook.Sheets[name];
+          const sheet = getSheet(workbook, name);
           if (!sheet) {
             reject(new Error(`시트를 찾을 수 없습니다: ${name}`));
             return;
           }
 
-          const jsonData = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, {
-            defval: '',
-            raw: false,
-          });
-          const filtered = jsonData.filter(row =>
-            Object.values(row).some(v => v !== '' && v != null)
-          );
+          const filtered = rowsFromSheet(sheet);
 
           // 헤더 합집합 — 등장 순서를 유지한다
           if (filtered.length > 0) {
