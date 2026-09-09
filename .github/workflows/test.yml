@@ -29,6 +29,9 @@ jobs:
 
       - run: npm ci
 
+      # `npm run test`는 vitest 앞에 scripts/verify-export-format.mjs를 돌린다.
+      # 내보내기가 전부 bookType: 'xlsx'인지 소스 수준에서 본다 —
+      # 수식 주입을 이스케이프하지 않는다는 결정이 그 전제 위에 서 있다.
       - run: npm run test
 
       # 타입 검사를 겸한다 (build 스크립트가 `tsc -b && vite build`).

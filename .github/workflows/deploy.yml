@@ -29,6 +29,7 @@ jobs:
 
       # 배포 전에 순수 함수 회귀 테스트를 통과해야 한다.
       # 실패하면 빌드로 넘어가지 않으므로 결함이 GitHub Pages까지 가지 않는다.
+      # vitest 앞에 scripts/verify-export-format.mjs(내보내기 형식 검사)도 함께 돈다.
       - run: npm run test
 
       - run: npm run build
