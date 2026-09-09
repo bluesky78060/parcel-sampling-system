@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import type { Parcel } from '../types';
 import { batchGeocode } from '../lib/batchGeocoder';
 import { isGeocodingAvailable } from '../lib/kakaoGeocoder';
-import type { GeocodeFailureKind } from '../lib/kakaoGeocoder';
+import type { GeocodeDiagnosticKind } from '../lib/batchGeocoder';
 
 /**
  * batchGeocode가 돌려준 최종 진단 중 화면이 쓰는 값.
@@ -65,7 +65,7 @@ export interface GeocodingState {
    * 사유를 따로 판정해, 진단이 "한도 초과(지금 다시 해도 같다)"로 정한 실행에서
    * 카드에는 "나중에 다시 실행하면 건너뜁니다"가 붙었다 — 같은 화면에 반대 지시.
    */
-  failureKind: GeocodeFailureKind | null;
+  failureKind: GeocodeDiagnosticKind | null;
   /** 최종 진단. 실행 중·취소·예외에서는 null이다. */
   summary: GeocodingSummary | null;
 }

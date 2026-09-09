@@ -102,6 +102,12 @@ export function GeocodingProgress({ state, onCancel }: GeocodingProgressProps) {
               {/* Phase 0는 리 단위로 돌아 done이 몇 분씩 멈춘다. 활동을 따로 보여준다 */}
               {note && <span className="ml-2 text-xs font-normal text-gray-500">{note}</span>}
             </p>
+          ) : serviceDown && summary && failureKind === 'no-results' ? (
+            // 이 사유는 **중단이 아니다.** 전 건을 시도했고 서버가 전부 "좌표 없음"으로
+            // 답했다. "멈췄습니다"라고 쓰면 남은 필지가 있는 줄 알고 다시 돌린다.
+            <p className="text-sm font-medium text-red-700">
+              좌표를 한 건도 얻지 못했습니다 — {total.toLocaleString()}건 전부 시도했습니다
+            </p>
           ) : serviceDown && summary ? (
             <p className="text-sm font-medium text-red-700">
               좌표 변환 중단 — {summary.resolved.toLocaleString()}/{total.toLocaleString()}건에서 멈췄습니다
@@ -129,7 +135,12 @@ export function GeocodingProgress({ state, onCancel }: GeocodingProgressProps) {
                 ? '호출 한도를 넘어 남은 필지는 시도하지 않았습니다. 한도가 초기화된 뒤 다시 실행하십시오.'
                 : failureKind === 'auth'
                   ? '인증이 거부되어 남은 필지는 시도하지 않았습니다. 다시 시도해도 같으면 배포 키를 확인해야 합니다.'
-                  : '서버가 응답하지 않아 남은 필지는 시도하지 않았습니다. 나중에 다시 실행하면 이미 변환된 건은 건너뜁니다.'}
+                  : failureKind === 'no-results'
+                    // 서버는 응답했다. 여기에 "응답하지 않았다"를 쓰면 사용자가 원인을
+                    // 엉뚱한 곳에서 찾는다. 그리고 무엇을 했는지(지우지 않았다)를 밝혀야
+                    // 사용자가 좌표가 남아 있는 이유를 안다.
+                    ? '서버가 응답은 했지만 좌표를 한 건도 주지 않았습니다. 서버 이상일 수 있어 기존 좌표는 지우지 않았습니다. 잠시 후 다시 실행해 보고, 같은 결과라면 주소 데이터를 확인하십시오.'
+                    : '서버가 응답하지 않아 남은 필지는 시도하지 않았습니다. 나중에 다시 실행하면 이미 변환된 건은 건너뜁니다.'}
             </p>
           )}
           {failureTotal > 0 && !breakdown && (

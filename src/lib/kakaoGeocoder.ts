@@ -537,9 +537,19 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   // VWORLD 우선 시도
   const vworldKey = getVworldKey();
   let serviceError: GeocodeServiceError | null = null;
+  /**
+   * VWORLD가 **권위 있게** 답했는가.
+   *
+   * `geocodeVworld`는 지번 조회가 답하지 못한 채 끝나면 던진다. 따라서 정상 반환은
+   * 곧 "지번 조회가 답했다"는 뜻이고, 그 답이 `null`이면 그것이 이 주소의 결론이다.
+   * 그때는 아래 Kakao의 실패가 판정을 뒤집지 못한다 — 보조 시도의 실패일 뿐이다.
+   * `geocodeVworld` 안의 `parcelAnswered`와 같은 원칙이 한 층 위에서 반복된다.
+   */
+  let vworldAnswered = false;
   if (vworldKey) {
     try {
       const result = await geocodeVworld(address, vworldKey);
+      vworldAnswered = true;
       if (result && isValidBonghwaCoord(result)) {
         cacheSet(cacheKey, result);
         setToIDB(cacheKey, result); // fire-and-forget
@@ -558,11 +568,20 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   // Kakao 폴백 (dev 프록시에서만 동작)
   const kakaoKey = readEnvKey('VITE_KAKAO_REST_KEY');
   if (KAKAO_REST_USABLE && kakaoKey) {
-    const result = await geocodeKakao(address, kakaoKey);
-    if (result && isValidBonghwaCoord(result)) {
-      cacheSet(cacheKey, result);
-      setToIDB(cacheKey, result); // fire-and-forget
-      return result;
+    const { coord, failure } = await geocodeKakao(address, kakaoKey);
+    if (coord && isValidBonghwaCoord(coord)) {
+      cacheSet(cacheKey, coord);
+      setToIDB(cacheKey, coord); // fire-and-forget
+      return coord;
+    }
+    // Kakao가 서버 사정으로 못 얻었고 **VWORLD도 답하지 않았다면** 이 주소에 대해
+    // 아무 근거가 없다. null로 돌려주면 호출자가 좌표를 지운다.
+    //
+    // VWORLD가 답했으면 넘어간다. 그쪽이 권위 있는 답이고 Kakao는 보조다 —
+    // 여기서 던지면 VWORLD가 정당하게 "좌표 없음"이라고 한 필지까지 보존되어
+    // 재변환의 초기화 기능이 죽는다.
+    if (failure && !vworldAnswered) {
+      serviceError ??= new GeocodeServiceError(failure);
     }
   }
 
@@ -770,8 +789,23 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
 /**
  * Kakao 지오코딩 (폴백용)
  */
-async function geocodeKakao(address: string, apiKey: string): Promise<LatLng | null> {
+/**
+ * Kakao 조회 한 건의 결과.
+ *
+ * 예전에는 `LatLng | null`이었다. 그래서 네트워크 오류·5xx·인증 거부가 전부 `null`이
+ * 되어 호출자가 "이 주소에 좌표가 없다"로 받아들였고, `batchGeocoder`가 좌표를
+ * 지웠다 — VWORLD 쪽에서 닫은 것과 **정확히 같은 구조**다.
+ */
+interface KakaoOutcome {
+  coord: LatLng | null;
+  /** 좌표를 못 얻은 것이 서버 사정이었다면 그 원문. 데이터 문제면 `null` */
+  failure: string | null;
+}
+
+async function geocodeKakao(address: string, apiKey: string): Promise<KakaoOutcome> {
   const headers = { Authorization: `KakaoAK ${apiKey}` };
+  // 좌표를 못 얻은 원인이 서버 사정이었는가. 첫 번째 것만 남긴다(주소 검색이 먼저다).
+  let failure: string | null = null;
 
   // 1. 주소 검색
   try {
@@ -785,21 +819,30 @@ async function geocodeKakao(address: string, apiKey: string): Promise<LatLng | n
     }
     if (res.status === 401 || res.status === 403) {
       console.warn('[kakao] API 인증/권한 실패:', res.status);
-      return null;
+      // 인증 거부는 "이 주소에 좌표가 없다"가 아니다. 여기서 null로 끝내면
+      // 호출자가 데이터 문제로 받아들여 좌표를 지운다.
+      return { coord: null, failure: `Kakao가 인증을 거부했습니다 (HTTP ${res.status})` };
     }
 
     if (res.ok) {
       const data = await res.json();
       if (data.documents?.length > 0) {
         return {
-          lat: parseFloat(data.documents[0].y),
-          lng: parseFloat(data.documents[0].x),
+          coord: {
+            lat: parseFloat(data.documents[0].y),
+            lng: parseFloat(data.documents[0].x),
+          },
+          failure: null,
         };
       }
+      // 정상 응답인데 결과가 없다 — 이것만이 데이터 문제다
+    } else {
+      failure ??= `Kakao가 오류로 응답했습니다 (HTTP ${res.status})`;
     }
   } catch (err) {
     if (err instanceof RateLimitError) throw err;
     console.warn('[kakao] 주소 검색 오류:', err);
+    failure ??= `Kakao 주소 검색이 실패했습니다: ${err instanceof Error ? err.message : String(err)}`;
   }
 
   // 2. 키워드 검색
@@ -814,24 +857,33 @@ async function geocodeKakao(address: string, apiKey: string): Promise<LatLng | n
     }
     if (res.status === 401 || res.status === 403) {
       console.warn('[kakao] API 인증/권한 실패:', res.status);
-      return null;
+      // 인증 거부는 "이 주소에 좌표가 없다"가 아니다. 여기서 null로 끝내면
+      // 호출자가 데이터 문제로 받아들여 좌표를 지운다.
+      return { coord: null, failure: `Kakao가 인증을 거부했습니다 (HTTP ${res.status})` };
     }
 
     if (res.ok) {
       const data = await res.json();
       if (data.documents?.length > 0) {
         return {
-          lat: parseFloat(data.documents[0].y),
-          lng: parseFloat(data.documents[0].x),
+          coord: {
+            lat: parseFloat(data.documents[0].y),
+            lng: parseFloat(data.documents[0].x),
+          },
+          failure: null,
         };
       }
+      // 정상 응답인데 결과가 없다 — 이것만이 데이터 문제다
+    } else {
+      failure ??= `Kakao가 오류로 응답했습니다 (HTTP ${res.status})`;
     }
   } catch (err) {
     if (err instanceof RateLimitError) throw err;
     console.warn('[kakao] 키워드 검색 오류:', err);
+    failure ??= `Kakao 키워드 검색이 실패했습니다: ${err instanceof Error ? err.message : String(err)}`;
   }
 
-  return null;
+  return { coord: null, failure };
 }
 
 /**

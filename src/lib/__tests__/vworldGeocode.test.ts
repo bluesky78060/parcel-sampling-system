@@ -226,6 +226,65 @@ describe('batchGeocode + 실제 kakaoGeocoder — 좌표 파괴 경로', () => {
     expect(diagnostics.notFound).toBe(3);
     expect(diagnostics.unreachable).toBe(0);
   });
+
+  /**
+   * **PROJ1-1-51.** 주소 API가 색인 장애로 전 건에 `NOT_FOUND`를 돌려주면, 서버가
+   * 보내는 것이 ①(진짜 좌표 없음)과 **글자 그대로 같다.** 요청 하나로는 구분할 수 없다.
+   *
+   * 그래서 `answered = true`가 되어 배타 체인의 `notFound` 가지로 가고 좌표가 지워졌다.
+   * `sawResponse`가 `chunkNotFound`를 생존 신호로 세므로 조기 중단도 걸리지 않아,
+   * **700필지 전량이 사라지는데 화면은 "변환 완료"라고 말했다.** 재변환은 캐시를
+   * 먼저 비우므로 되돌릴 수 없다.
+   *
+   * 요청 단위로 못 가르는 것을 **집계로** 가른다 — 네트워크로 좌표를 한 건도 얻지
+   * 못했는데 "좌표 없음"만 대량이면, 주소가 전부 잘못된 파일보다 서버 이상일 확률이
+   * 압도적이다. 삭제를 실행 끝으로 미뤄 그 집계를 보고 결정한다.
+   */
+  describe('전 건이 "좌표 없음"으로 끝나는 장애 (PROJ1-1-51)', () => {
+    it('네트워크 성공 0건 + 대량 notFound면 좌표를 지우지 않는다', async () => {
+      jsonpImpl = async () => notFoundResponse();
+      const { parcels, diagnostics } = await run(withCoords(60));
+      expect(parcels.every((p) => p.coords?.lat === 36.5)).toBe(true);
+      expect(diagnostics.serviceDown).toBe(true);
+      expect(diagnostics.failureKind).toBe('no-results');
+      // 서버는 답했다. `unreachable`로 옮기지 않는다 — 사실이 아니고, 파티션도 깨진다.
+      expect(diagnostics.notFound).toBe(60);
+      expect(diagnostics.unreachable).toBe(0);
+    });
+
+    /**
+     * **이 티켓의 가장 큰 위험.** 임계값을 잘못 잡으면 재변환의 초기화 기능이 죽는다.
+     * 소량은 계속 지워져야 한다 — 몇 건만 골라 다시 돌리는 사용을 막으면 안 된다.
+     */
+    it('소량(임계값 미만)은 계속 지운다', async () => {
+      jsonpImpl = async () => notFoundResponse();
+      const { parcels, diagnostics } = await run(withCoords(10));
+      expect(parcels.every((p) => p.coords === null)).toBe(true);
+      expect(diagnostics.serviceDown).toBe(false);
+      expect(diagnostics.notFound).toBe(10);
+    });
+
+    /**
+     * 서버가 한 건이라도 좌표를 주면 살아 있는 것이다. 나머지 "좌표 없음"은 진짜
+     * 데이터 문제이므로 정상적으로 지워져야 한다 — 여기가 깨지면 ①이 죽는다.
+     */
+    it('네트워크로 좌표를 하나라도 얻으면 나머지는 정상적으로 지운다', async () => {
+      let n = 0;
+      jsonpImpl = async () => (++n === 1 ? okResponse() : notFoundResponse());
+      const { parcels, diagnostics } = await run(withCoords(60));
+      expect(diagnostics.serviceDown).toBe(false);
+      // 첫 건만 좌표를 얻고 나머지 59건은 지워진다
+      expect(parcels.filter((p) => p.coords === null)).toHaveLength(59);
+      expect(diagnostics.notFound).toBe(59);
+    });
+
+    it('파티션 검산이 성립한다', async () => {
+      jsonpImpl = async () => notFoundResponse();
+      const { diagnostics: d } = await run(withCoords(60));
+      expect(d.notFound + d.quotaBlocked + d.unreachable + d.authBlocked)
+        .toBe(d.attemptedFailures);
+    });
+  });
 });
 
 /**

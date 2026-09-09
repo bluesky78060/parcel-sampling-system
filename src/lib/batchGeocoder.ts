@@ -39,7 +39,7 @@ export interface BatchGeocodingOptions {
 export interface BatchGeocodeDiagnostics {
   /** 서버 장애로 판단해 중간에 포기했는가 */
   serviceDown: boolean;
-  failureKind: GeocodeFailureKind | null;
+  failureKind: GeocodeDiagnosticKind | null;
   /** 사용자에게 보여줄 한 줄 설명 (serviceDown일 때만 채운다) */
   message: string | null;
   /** 관측한 원인 원문 (로그용) */
@@ -75,7 +75,34 @@ export interface BatchGeocodeResult {
 /** 성공 0건 상태에서 이만큼의 배치가 연달아 서버 미응답이면 중단한다 */
 const SERVICE_DOWN_BATCH_THRESHOLD = 2;
 
-function serviceDownMessage(kind: GeocodeFailureKind): string {
+/**
+ * 진단이 보고하는 사유.
+ *
+ * `GeocodeFailureKind`(지오코딩이 **던지는** 오류의 종류)에 하나를 더한다.
+ * `'no-results'`는 오류가 아니다 — 서버가 정상으로 답했는데 좌표를 한 건도 주지
+ * 않은 상태다. `GeocodeServiceError.kind`에는 넣지 않는다. 그 자리에 넣으면
+ * "던질 수 있는 오류"라는 뜻이 되는데, 이것은 던져지지 않고 집계로만 판정된다.
+ */
+export type GeocodeDiagnosticKind = GeocodeFailureKind | 'no-results';
+
+/**
+ * 네트워크로 좌표를 **한 건도** 못 얻은 실행에서, 이만큼의 "좌표 없음"이 나오면
+ * 서버 이상을 의심해 좌표를 지우지 않는다.
+ *
+ * 요청 하나로는 ①(진짜 좌표 없음)과 주소 API 색인 장애를 구분할 수 없다 — 서버가
+ * 보내는 것이 글자 그대로 같은 `status: "NOT_FOUND"`다. 집계로만 갈린다.
+ *
+ * **작게 잡으면 재변환의 초기화 기능이 죽는다.** 몇 건만 골라 다시 돌려 좌표를
+ * 비우는 사용을 막게 된다. 그래서 소량은 그대로 지운다 — "전부 실패"가 소량에서는
+ * 이상하지 않다.
+ *
+ * 오탐(임계값을 넘겼는데 실제로는 주소가 전부 잘못된 파일)이어도 **손실이 없다.**
+ * 그 경우에도 기존 좌표는 이전의 정상 실행에서 온 것이므로 지키는 쪽이 맞다.
+ * 반대 방향의 오판(장애인데 지운다)만 복구 불가다.
+ */
+const SUSPICIOUS_NOTFOUND_ONLY = 50;
+
+function serviceDownMessage(kind: GeocodeDiagnosticKind): string {
   switch (kind) {
     case 'auth':
       // VWORLD는 과부하일 때도 같은 문구를 돌려준다. "키를 고치라"고 단정하면
@@ -85,6 +112,12 @@ function serviceDownMessage(kind: GeocodeFailureKind): string {
     case 'quota':
       return 'VWORLD 호출 한도를 초과했습니다. 한도는 보통 다음 날 초기화되므로 '
         + '지금 다시 시도해도 같은 결과입니다.';
+    case 'no-results':
+      // 서버는 응답했다. "응답하지 않는다"고 쓰면 사실이 아니고, 사용자가 원인을
+      // 엉뚱한 곳에서 찾는다. 두 가능성을 함께 적고, 무엇을 했는지(지우지 않았다)를 밝힌다.
+      return 'VWORLD가 응답은 했지만 좌표를 한 건도 주지 않았습니다. '
+        + '서버의 주소 검색이 일시적으로 비어 있거나 주소 데이터에 문제가 있을 수 있습니다. '
+        + '기존 좌표는 지우지 않고 그대로 두었습니다.';
     default:
       // JSONP는 script 태그로 호출하므로 HTTP 상태 코드를 읽을 수 없다.
       // 502인지 503인지 알 수 없으므로 특정 코드를 문구에 넣지 않는다.
@@ -134,7 +167,7 @@ export async function batchGeocode(
 
   // 진단 상태. 어느 경로로 끝나든 finish()를 거쳐 호출자에게 전달된다.
   let serviceDown = false;
-  let failureKind: GeocodeFailureKind | null = null;
+  let failureKind: GeocodeDiagnosticKind | null = null;
   let failureDetail: string | null = null;
 
   const finish = (
@@ -406,6 +439,11 @@ export async function batchGeocode(
   let failed = 0;
   // 서버가 응답했는데 좌표가 없었던 건수. 서버 미응답과 반드시 구분한다.
   let notFound = 0;
+  /**
+   * 좌표를 지울 필지의 인덱스. 루프 안에서 바로 지우지 않고 모아 둔다 —
+   * 지워도 되는지는 **실행 전체의 집계**를 봐야 알 수 있다(PROJ1-1-51).
+   */
+  const pendingErasures: number[] = [];
   // 호출 한도 초과로 실패한 건수. 서버는 살아 있지만 오늘은 회복되지 않으므로
   // notFound(데이터 문제)와 섞으면 안 된다.
   let quotaBlocked = 0;
@@ -546,12 +584,20 @@ export async function batchGeocode(
         // 서지 않은 미분류 경로는 `else`로 떨어져 지웠다. PROJ1-1-45(분류하지 못한
         // VWORLD `ERROR`가 null로 새던 것)가 그 사고의 한 예였고, 분류 밖의 예외가
         // 여기까지 오는 경로가 또 하나였다. 기본값을 뒤집으면 그 부류가 통째로 닫힌다.
-        const serviceFailure = coords === null && !answered;
-        if (!serviceFailure) {
+        //
+        // ⚠️ **삭제만 실행 끝으로 미룬다** (PROJ1-1-51). 주소 API가 색인 장애로 전 건에
+        // `NOT_FOUND`를 돌려주면 서버가 보내는 것이 ①과 글자 그대로 같아, 이 시점에는
+        // 구분할 수 없다. 구분에 필요한 값(실행 전체의 네트워크 성공 건수)이 아직
+        // 확정되지 않았기 때문이다. 기입은 그대로 하고 삭제만 유보한다.
+        if (coords !== null) {
           for (const idx of entry.allIndices) {
             results[idx] = { ...results[idx], coords };
           }
+        } else if (answered) {
+          // 지울 대상. 실제 삭제는 루프가 끝난 뒤 집계를 보고 결정한다.
+          for (const idx of entry.allIndices) pendingErasures.push(idx);
         }
+        // 그 밖(한도·인증·미응답·분류 밖 예외)은 아무것도 쓰지 않는다 — 좌표를 지킨다.
 
         // IndexedDB 저장은 geocodeAddress가 이미 하고 있으므로 여기서 또 쓰지 않는다
         if (coords) {
@@ -683,6 +729,37 @@ export async function batchGeocode(
   if (networkResolved > 0 && deadBatches < SERVICE_DOWN_BATCH_THRESHOLD) {
     serviceDown = false;
     failureKind = null;
+  }
+
+  // **미뤄 둔 삭제를 지금 결정한다** (PROJ1-1-51).
+  //
+  // 네트워크로 좌표를 한 건도 못 얻었는데 "좌표 없음"만 대량이면, 주소가 전부 잘못된
+  // 파일보다 주소 API의 색인 장애일 확률이 압도적이다. 요청 하나로는 못 가르지만
+  // 집계로는 갈린다 — ①이라면 보통 일부는 좌표를 얻는다.
+  //
+  // 배치 단위로 판정하지 않는 이유는 바로 위 `sawResponse` 주석에 이미 있다:
+  // "잘못 기재된 주소가 많은 파일에서는 정상 서버가 전부 결과 없음으로 답하는 배치가
+  // 흔하다." 그래서 실행 전체로 본다.
+  //
+  // `notFound`를 조건에 쓴다. `pendingErasures.length`와 같은 값이지만(둘 다
+  // `coords === null && answered`에서만 는다), 사용자가 화면에서 보는 숫자로 판정해야
+  // 안내와 동작이 갈리지 않는다.
+  const noResultsOutage = networkResolved === 0 && notFound >= SUSPICIOUS_NOTFOUND_ONLY;
+  if (noResultsOutage) {
+    serviceDown = true;
+    // 이미 정해진 사유가 있으면 덮지 않는다 — 그쪽이 더 확정적인 신호다.
+    failureKind ??= 'no-results';
+    failureDetail ??=
+      `${notFound.toLocaleString()}건이 모두 "좌표 없음"이고 네트워크로 얻은 좌표가 0건입니다 `
+      + '— 서버 이상일 수 있어 기존 좌표를 지우지 않았습니다';
+    console.error(
+      `[batchGeocoder] 네트워크 성공 0건 / "좌표 없음" ${notFound.toLocaleString()}건 — ` +
+      `서버 이상을 의심해 ${pendingErasures.length.toLocaleString()}건의 좌표 삭제를 취소합니다`
+    );
+  } else {
+    for (const idx of pendingErasures) {
+      results[idx] = { ...results[idx], coords: null };
+    }
   }
 
   return finish(results, {
