@@ -227,3 +227,228 @@ describe('batchGeocode + 실제 kakaoGeocoder — 좌표 파괴 경로', () => {
     expect(diagnostics.unreachable).toBe(0);
   });
 });
+
+/**
+ * **좌표를 지우는 결론에는 긍정적 근거가 있어야 한다.**
+ *
+ * PROJ1-1-45는 "분류되지 않은 ERROR 응답"이 좌표를 지우던 것을 막았다. 그런데
+ * 같은 모양의 구멍이 셋 더 있었다 — 모두 "분류하지 못한 것이 `null`(= 좌표 없음)로
+ * 떨어진다"는 같은 구조다.
+ *
+ * 1. 지번 조회가 **네트워크 오류·타임아웃**으로 죽고 도로명이 `NOT_FOUND`로 답하면
+ *    `responded`가 서서 `null`이 됐다. 실 API로 확인한 바, 지번 주소를 `type=road`로
+ *    조회하면 `NOT_FOUND`가 **정상 결과**다. 즉 과부하로 지번 조회 하나만 타임아웃
+ *    돼도 그 필지의 좌표는 재변환에서 지워졌다. PROJ1-1-45의 논거("지번 좌표는
+ *    지번 조회만이 답한다")가 네트워크 경로에는 적용되지 않은 채 남아 있었다.
+ * 2. `jsonp`가 `JsonpNetworkError`·`JsonpTimeoutError` 밖의 예외(예: 응답이
+ *    `null`이면 `data.response`에서 TypeError)를 내면 어느 카운터도 오르지 않았다.
+ * 3. `classifyVworldResponse`가 `status`가 없거나 미지의 값인 응답을 `empty`로
+ *    분류했다 — `response` 필드가 빠진 게이트웨이 오류 페이로드가 "좌표 없음"이 된다.
+ *
+ * 규칙을 뒤집는다: **지번 조회가 정상 응답으로 "결과 없음"을 말했을 때만** null이다.
+ * 지번이 답하지 못한 채 어떤 경로로 끝나든 `GeocodeServiceError`다. 도로명 조회는
+ * 보조 시도라 그 결과가 지번의 판정을 뒤집지 못한다(아래 "권위 있는 조회" 참조).
+ */
+const { JsonpNetworkError, JsonpTimeoutError } = await import('../jsonp');
+
+describe('classifyVworldResponse — 미지의 응답은 empty가 아니다', () => {
+  it('response 필드가 없으면 error', () => {
+    expect(classifyVworldResponse(undefined).kind).toBe('error');
+  });
+
+  it('status가 스펙 밖의 값이면 error', () => {
+    const res = { status: 'MAINTENANCE' } as unknown as Parameters<typeof classifyVworldResponse>[0];
+    expect(classifyVworldResponse(res).kind).toBe('error');
+  });
+});
+
+describe('geocodeAddress — 좌표 없음(null)은 지번 조회가 정상 응답했을 때만', () => {
+  it('지번이 타임아웃이고 도로명이 정상 결과없음이면 서버 오류다', async () => {
+    jsonpImpl = async (_url, params) => {
+      if (params.type === 'parcel') throw new JsonpTimeoutError('u');
+      return notFoundResponse();
+    };
+    await expect(geocodeAddress(uniqueAddress())).rejects.toBeInstanceOf(GeocodeServiceError);
+  });
+
+  /**
+   * **권위 있는 조회는 지번이다.** 이 데이터의 주소는 본번·부번으로 조립된 지번이고,
+   * 도로명 조회는 보조 시도다(실 API: 지번 주소를 `type=road`로 조회하면 `NOT_FOUND`).
+   * 지번이 정상 응답으로 "결과 없음"을 말했으면 도로명이 어떻게 끝나든 그 판정을
+   * 뒤집지 못한다. 뒤집으면 — 도로명 쪽만 오류를 내는 서버에서 전량이 `unreachable`이
+   * 되어 배치 2개 만에 조기 중단되고, 재변환의 초기화 기능이 영영 막힌다(실측: 100건
+   * 중 10건만 시도하고 90건 포기, 재실행해도 같다).
+   */
+  it('지번이 정상 결과없음이면 도로명이 네트워크 오류여도 null이다 (지번이 권위 있는 답)', async () => {
+    jsonpImpl = async (_url, params) => {
+      if (params.type === 'road') throw new JsonpNetworkError('u');
+      return notFoundResponse();
+    };
+    await expect(geocodeAddress(uniqueAddress())).resolves.toBeNull();
+    expect(jsonpTypes).toEqual(['parcel', 'road']);
+  });
+
+  it('지번이 정상 결과없음이면 도로명이 ERROR여도 null이다', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? notFoundResponse() : errorResponse('SYSTEM_ERROR', '시스템 오류');
+    await expect(geocodeAddress(uniqueAddress())).resolves.toBeNull();
+  });
+
+  /**
+   * 봉화군 밖 좌표. 예전에는 `geocodeVworld`가 좌표를 얻는 순간 지번 조회의 오류를
+   * **버리고** 반환했고, `geocodeAddress`가 범위 검사로 탈락시키면 `serviceError`가
+   * null인 채 null이 됐다 — 서버 오류가 "좌표 없음"으로 세탁되어 좌표가 지워졌다
+   * (실측: 지번 ERROR / 도로명 봉화 밖 → notFound 3, 삭제 3). 도로명 조회도 시도되지
+   * 않았다. 범위 밖 좌표는 그 시도에 한해 "결과 없음"이다.
+   */
+  const OUT_OF_BONGHWA = { x: '129.5', y: '36.9' }; // lngMax 129.21 초과
+
+  it('지번이 ERROR이고 도로명이 봉화 밖 좌표면 서버 오류다 (오류가 세탁되지 않는다)', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? errorResponse('SYSTEM_ERROR', '시스템 오류') : okResponse(OUT_OF_BONGHWA);
+    await expect(geocodeAddress(uniqueAddress())).rejects.toBeInstanceOf(GeocodeServiceError);
+  });
+
+  it('지번이 봉화 밖 좌표이고 도로명이 ERROR면 null이다 (지번이 확정적으로 딴 곳을 답했다)', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? okResponse(OUT_OF_BONGHWA) : errorResponse('SYSTEM_ERROR', '시스템 오류');
+    await expect(geocodeAddress(uniqueAddress())).resolves.toBeNull();
+  });
+
+  it('지번이 봉화 밖 좌표면 도로명을 시도하고, 그쪽 좌표가 맞으면 그것을 쓴다', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? okResponse(OUT_OF_BONGHWA) : okResponse();
+    await expect(geocodeAddress(uniqueAddress())).resolves.toEqual({ lat: 36.9, lng: 128.9 });
+    expect(jsonpTypes).toEqual(['parcel', 'road']);
+  });
+
+  it('둘 다 봉화 밖 좌표면 null이다', async () => {
+    jsonpImpl = async () => okResponse(OUT_OF_BONGHWA);
+    await expect(geocodeAddress(uniqueAddress())).resolves.toBeNull();
+  });
+
+  it('jsonp가 null을 돌려주면 서버 오류다 (TypeError를 삼키지 않는다)', async () => {
+    jsonpImpl = async () => null;
+    await expect(geocodeAddress(uniqueAddress())).rejects.toBeInstanceOf(GeocodeServiceError);
+  });
+
+  it('jsonp가 분류 밖의 예외를 던지면 서버 오류다', async () => {
+    jsonpImpl = async () => {
+      throw new Error('boom');
+    };
+    await expect(geocodeAddress(uniqueAddress())).rejects.toBeInstanceOf(GeocodeServiceError);
+  });
+
+  it('지번 오류 뒤에 도로명이 인증 거부면 auth가 이긴다 (첫 오류가 뒤의 분류를 가리지 않는다)', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel'
+        ? errorResponse('SYSTEM_ERROR', '시스템 오류')
+        : errorResponse('INVALID_KEY', '등록되지 않은 인증키입니다');
+    await expect(geocodeAddress(uniqueAddress())).rejects.toMatchObject({ kind: 'auth' });
+  });
+
+  /**
+   * 실 API: 빈 주소는 `ERROR PARAM_REQUIRED`다. 위 규칙대로면 그것이 서버 오류가
+   * 되어 "미응답"으로 집계된다. 주소가 없는 것은 데이터 문제이고 서버에 물을 것도
+   * 없다 — 네트워크에 나가기 전에 null로 끝낸다.
+   */
+  it('빈 주소는 서버에 묻지 않고 null이다', async () => {
+    await expect(geocodeAddress('   ')).resolves.toBeNull();
+    expect(jsonpTypes).toEqual([]);
+  });
+});
+
+describe('batchGeocode + 실제 kakaoGeocoder — 미응답이 섞인 재변환', () => {
+  const withCoords = (n: number): Parcel[] =>
+    Array.from({ length: n }, (_, i) =>
+      makeParcel({
+        pnu: '',
+        parcelId: `${800 + i}`,
+        address: uniqueAddress(),
+        coords: { lat: 36.5, lng: 128.5 },
+      }),
+    );
+  const partition = (d: { notFound: number; quotaBlocked: number; unreachable: number; authBlocked: number }) =>
+    d.notFound + d.quotaBlocked + d.unreachable + d.authBlocked;
+
+  it('지번 타임아웃 + 도로명 결과없음은 좌표를 지우지 않고 미응답으로 센다', async () => {
+    jsonpImpl = async (_url, params) => {
+      if (params.type === 'parcel') throw new JsonpTimeoutError('u');
+      return notFoundResponse();
+    };
+    const { parcels, diagnostics } = await batchGeocode(withCoords(3), {
+      force: true, skipHealthCheck: true, concurrency: 5, maxRetries: 0,
+    });
+    expect(parcels.every((p) => p.coords?.lat === 36.5)).toBe(true);
+    expect(diagnostics.notFound).toBe(0);
+    expect(diagnostics.unreachable).toBe(3);
+    expect(partition(diagnostics)).toBe(diagnostics.attemptedFailures);
+  });
+
+  it('진짜 결과없음과 미응답이 섞이면 앞엣것만 지우고 파티션이 성립한다', async () => {
+    const parcels = withCoords(4);
+    const dead = new Set([parcels[2].address, parcels[3].address]);
+    jsonpImpl = async (_url, params) => {
+      if (dead.has(params.address) && params.type === 'parcel') throw new JsonpNetworkError('u');
+      return notFoundResponse();
+    };
+    const { parcels: out, diagnostics } = await batchGeocode(parcels, {
+      force: true, skipHealthCheck: true, concurrency: 5, maxRetries: 0,
+    });
+    expect(out[0].coords).toBeNull();
+    expect(out[1].coords).toBeNull();
+    expect(out[2].coords?.lat).toBe(36.5);
+    expect(out[3].coords?.lat).toBe(36.5);
+    expect(diagnostics.notFound).toBe(2);
+    expect(diagnostics.unreachable).toBe(2);
+    expect(partition(diagnostics)).toBe(diagnostics.attemptedFailures);
+  });
+});
+
+/**
+ * 결함 1의 배치 수준 재현. 도로명 조회만 오류를 내는 서버에서 지번 `NOT_FOUND`가
+ * 서버 오류로 뒤집히면 전량 `unreachable` → `sawResponse`가 서지 않아 배치 2개 만에
+ * 조기 중단된다. 지번이 답한 이상 데이터 문제이므로 끝까지 돌고, 좌표는 지워진다
+ * (재변환의 초기화 기능).
+ */
+describe('batchGeocode + 실제 kakaoGeocoder — 도로명만 오류인 서버', () => {
+  const withCoords = (n: number): Parcel[] =>
+    Array.from({ length: n }, (_, i) =>
+      makeParcel({
+        pnu: '',
+        parcelId: `${900 + i}`,
+        address: uniqueAddress(),
+        coords: { lat: 36.5, lng: 128.5 },
+      }),
+    );
+  const run = (parcels: Parcel[]) =>
+    batchGeocode(parcels, { force: true, skipHealthCheck: true, concurrency: 5, maxRetries: 0 });
+
+  it('지번 결과없음 + 도로명 ERROR는 조기 중단 없이 전량 좌표 없음이다', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? notFoundResponse() : errorResponse('SYSTEM_ERROR', '시스템 오류');
+    const { parcels, diagnostics } = await run(withCoords(15)); // 배치 3개
+    expect(diagnostics.serviceDown).toBe(false);
+    expect(diagnostics.attemptedFailures).toBe(15);
+    expect(diagnostics.notFound).toBe(15);
+    expect(diagnostics.unreachable).toBe(0);
+    expect(parcels.every((p) => p.coords === null)).toBe(true);
+  });
+
+  it('대조군: 양쪽 결과없음도 전량 좌표 없음이다', async () => {
+    jsonpImpl = async () => notFoundResponse();
+    const { parcels, diagnostics } = await run(withCoords(15));
+    expect(diagnostics.serviceDown).toBe(false);
+    expect(diagnostics.notFound).toBe(15);
+    expect(parcels.every((p) => p.coords === null)).toBe(true);
+  });
+
+  it('반대로 지번 ERROR + 도로명 결과없음은 조기 중단하고 좌표를 지킨다', async () => {
+    jsonpImpl = async (_url, params) =>
+      params.type === 'parcel' ? errorResponse('SYSTEM_ERROR', '시스템 오류') : notFoundResponse();
+    const { parcels, diagnostics } = await run(withCoords(15));
+    expect(diagnostics.serviceDown).toBe(true);
+    expect(diagnostics.notFound).toBe(0);
+    expect(parcels.every((p) => p.coords?.lat === 36.5)).toBe(true);
+  });
+});
