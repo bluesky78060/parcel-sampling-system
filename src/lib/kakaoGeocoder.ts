@@ -569,15 +569,68 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
 }
 
 /**
+ * VWORLD 응답 한 건을 분류한 결과.
+ *
+ * `empty`(서버가 답했고 좌표가 없다)와 `error`(서버가 오류로 답했다)를 **반드시**
+ * 가른다. 예전에는 둘 다 `null`이 되어 호출자가 구분할 수 없었다 — 아래 참조.
+ */
+export type VworldOutcome =
+  | { kind: 'coord'; coord: LatLng }
+  | { kind: 'empty' }
+  | { kind: 'quota'; detail: string }
+  | { kind: 'auth'; detail: string }
+  | { kind: 'error'; detail: string };
+
+/**
+ * VWORLD 응답을 분류하는 **순수 함수.**
+ *
+ * `geocodeVworld` 안에 인라인으로 있던 판정을 떼어냈다. 그쪽은 `jsonp`(= script
+ * 태그 = DOM)를 거쳐야만 닿을 수 있어 `environment: 'node'`인 이 저장소에서는
+ * **아무도 실측하지 못했다.** PROJ1-1-43 리뷰어도 코드를 읽어 추정해야 했고,
+ * 그 사이 아래 결함이 그대로 남아 있었다.
+ *
+ * **왜 분류되지 않은 ERROR가 `empty`가 아닌가.** `isRateLimited`·
+ * `isAuthErrorResponse`는 키워드 매칭이다(QUOTA/LIMIT/OVER/초과/제한, 인증 문구 또는
+ * 코드의 KEY). VWORLD가 그 밖의 코드를 돌려주면 어디에도 걸리지 않는데, 예전에는
+ * 그것을 `responded = true; continue`로 흘려보내 `null`이 됐다. 호출자
+ * (`batchGeocoder`)의 배타 체인은 분류되지 않은 것을 전부 `notFound`로 집계하므로,
+ * **서버 오류가 "이 주소에는 좌표가 없다"가 되어 재변환이 좌표를 지웠다.**
+ * `serviceDown`도 서지 않아 화면은 "변환 완료"라고 말했다.
+ *
+ * 같은 파일의 다른 두 판정 지점(`prefetchPolygonsByPnu`·`checkGeocodingService`)은
+ * 이미 분류되지 않은 ERROR를 `unreachable`로 떨어뜨린다. 주소 경로만 달랐다.
+ */
+export function classifyVworldResponse(res: VworldResponse['response']): VworldOutcome {
+  if (res?.status === 'ERROR') {
+    const detail = `${res.error?.code ?? ''} ${res.error?.text ?? ''}`.trim();
+    if (isRateLimited(res.error)) return { kind: 'quota', detail };
+    if (isAuthErrorResponse(res.error)) return { kind: 'auth', detail };
+    return { kind: 'error', detail };
+  }
+
+  const point = res?.status === 'OK' ? res.result?.point : undefined;
+  if (point) {
+    const lat = parseFloat(point.y);
+    const lng = parseFloat(point.x);
+    // 숫자가 아닌 좌표는 쓸 수 없지만 서버는 답한 것이다. 여기서 `error`로 올리면
+    // 서버가 멀쩡한데도 조기 중단이 걸린다 — 좌표 없음과 같은 칸에 둔다.
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return { kind: 'coord', coord: { lat, lng } };
+  }
+  return { kind: 'empty' };
+}
+
+/**
  * VWORLD 지오코딩 (국토교통부 무료 API)
  * - 지번 주소 검색 → 도로명 주소 검색 순서
  */
 async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | null> {
   // 서버가 응답하지 않은 횟수. 좌표를 못 찾은 것과 구분하려고 따로 센다.
   let unreachable = 0;
-  // 서버가 한 번이라도 답했는가. 답했다면 서버는 살아 있는 것이므로,
-  // 다른 시도가 네트워크 오류로 죽었더라도 장애로 보고하지 않는다.
+  // 서버가 한 번이라도 **정상** 응답했는가. ERROR 응답은 여기 넣지 않는다 —
+  // 그것은 "서버가 살아 있다"는 뜻일 뿐 "이 주소에 좌표가 없다"의 근거가 아니다.
   let responded = false;
+  // 분류되지 않은 ERROR의 원문. 하나라도 있으면 서버 사정으로 본다.
+  let serverError: string | null = null;
 
   // 지번 → 도로명 순으로 시도한다
   for (const type of ['parcel', 'road'] as const) {
@@ -595,34 +648,35 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
         key: apiKey,
       });
       const elapsed = Date.now() - t0;
-      const res = data.response;
+      const outcome = classifyVworldResponse(data.response);
 
-      if (res?.status === 'ERROR') {
-        if (isRateLimited(res.error)) {
-          console.warn(`  ⏳ VWORLD ${label} 쿼터 초과 (${elapsed}ms): ${res.error?.text ?? ''}`);
-          throw new RateLimitError('vworld');
-        }
-        console.warn(`[vworld] ${label} 오류: ${res.error?.code ?? ''} ${res.error?.text ?? ''}`);
+      if (outcome.kind === 'quota') {
+        console.warn(`  ⏳ VWORLD ${label} 쿼터 초과 (${elapsed}ms): ${outcome.detail}`);
+        throw new RateLimitError('vworld');
+      }
+      if (outcome.kind === 'auth') {
+        console.warn(`[vworld] ${label} 오류: ${outcome.detail}`);
         // 인증키 문제는 도로명으로 재시도해도 같은 결과다. 그리고 이것은 "이 주소에
         // 좌표가 없다"가 아니다 — null로 돌려주면 데이터 문제로 집계되어 4만 건을
         // 끝까지 시도하게 된다. VWORLD는 API별로 키를 따로 등록하므로, 데이터 API가
         // 멀쩡해도 지오코딩 API만 거부될 수 있다.
-        if (isAuthErrorResponse(res.error)) {
-          throw new GeocodeServiceError(
-            `VWORLD 지오코딩이 인증키를 거부했습니다: ${res.error?.text ?? ''}`, 'auth');
-        }
-        // 그 밖의 ERROR는 서버가 답한 것이므로 생존 신호로 본다
-        responded = true;
+        throw new GeocodeServiceError(
+          `VWORLD 지오코딩이 인증키를 거부했습니다: ${outcome.detail}`, 'auth');
+      }
+      if (outcome.kind === 'error') {
+        console.warn(`[vworld] ${label} 오류: ${outcome.detail}`);
+        // 여기서 던지지 않고 기록만 한다 — 지번이 오류라도 도로명이 좌표를 줄 수
+        // 있고, 좌표를 얻는 쪽이 언제나 낫다. 못 얻고 루프가 끝나면 아래에서 던진다.
+        serverError ??= outcome.detail;
         continue;
       }
 
       // 정상 응답 — 결과가 없어도 서버는 살아 있다
       responded = true;
 
-      const point = res?.result?.point;
-      if (res?.status === 'OK' && point) {
+      if (outcome.kind === 'coord') {
         if (elapsed > 500) console.info(`  🐢 VWORLD ${label} 느림 (${elapsed}ms): ${address}`);
-        return { lat: parseFloat(point.y), lng: parseFloat(point.x) };
+        return outcome.coord;
       }
       if (elapsed > 500) console.info(`  △ VWORLD ${label} 결과없음 (${elapsed}ms): ${address}`);
     } catch (err) {
@@ -634,6 +688,19 @@ async function geocodeVworld(address: string, apiKey: string): Promise<LatLng | 
       if (err instanceof JsonpNetworkError || err instanceof JsonpTimeoutError) unreachable++;
       console.warn(`[vworld] ${label} 검색 오류:`, err);
     }
+  }
+
+  // 좌표를 못 얻은 채 서버 오류를 봤다면 데이터 문제로 단정할 수 없다.
+  //
+  // **다른 쪽이 정상 "결과 없음"이었어도 마찬가지다.** 지번 주소의 좌표는 지번
+  // 조회만이 답할 수 있으므로, 그 조회가 오류로 끝난 이상 "이 주소에 좌표가 없다"는
+  // 결론에는 근거가 없다. 여기서 null로 돌려주면 호출자가 좌표를 지운다.
+  //
+  // `kind`를 `unreachable`로 둔다. 새 종류를 만들면 진단 카테고리가 늘어 화면의
+  // 파티션 검산(`notFound + quota + unreachable + auth === attemptedFailures`)까지
+  // 따라 고쳐야 하는데, 사용자가 취할 행동은 미응답과 같다 — 나중에 다시 실행한다.
+  if (serverError) {
+    throw new GeocodeServiceError(`VWORLD 지오코딩이 오류를 반환했습니다: ${serverError}`);
   }
 
   // 서버가 한 번도 답하지 않은 채 미응답만 관측됐다면 데이터 문제가 아니다.
