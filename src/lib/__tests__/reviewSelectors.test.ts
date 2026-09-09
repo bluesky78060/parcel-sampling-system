@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { Parcel } from '../../types';
 import {
   buildMapSelectedParcels,
   buildTableParcels,
@@ -6,6 +7,7 @@ import {
   isParcelSelected,
   mergeWithRepresentatives,
 } from '../reviewSelectors';
+import { isRepresentative } from '../parcelCategory';
 import { makeParcel } from './factories';
 
 /**
@@ -36,6 +38,16 @@ const beopJeon = (over = {}) =>
     ...over,
   });
 
+/**
+ * `useMarkerLayer`가 대표필지를 세는 술어를 그대로 복제한다(필터·경계 게이트 제외).
+ * 훅은 DOM을 요구해 node에서 렌더할 수 없으므로, 계수 조건만 떼어 범례와 대조한다.
+ */
+const badgeRepresentativeCount = (mapParcels: Parcel[]) =>
+  mapParcels.filter((p) => p.coords && isRepresentative(p)).length;
+
+/** 기채취 연도 두 개(최근순). 아래 여러 describe가 공유한다 */
+const SAMPLED_YEARS: readonly [number, number] = [2025, 2024];
+
 describe('mergeWithRepresentatives', () => {
   it('대표필지가 없으면 마스터를 그대로 돌려준다', () => {
     const all = [makeParcel({ pnu: 'PNU_A' })];
@@ -54,6 +66,66 @@ describe('mergeWithRepresentatives', () => {
     const master = makeParcel({ pnu: 'PNU_A', coords: { lat: 36.9, lng: 128.9 } });
     const rep = makeParcel({ pnu: 'PNU_A', coords: null });
     expect(mergeWithRepresentatives([master], [rep])[0].coords).not.toBeNull();
+  });
+
+  /**
+   * **재리뷰 3라운드에서 드러난 선재 결함.** 마스터 행을 남기면 그 행의
+   * `parcelCategory`는 파싱 기본값 `'public-payment'`라, 겹치는 대표필지가
+   * `isRepresentative`에서 거짓이 되어 지도에 파란 원으로 찍혔다.
+   *
+   * 선정 결과 경로는 `buildMapSelectedParcels`가 카테고리를 다시 써 줘 이 구멍이
+   * 없었다. "추출 선택만"을 끈 모드만 재기입이 없어 갈라져 있었다.
+   */
+  it('겹치는 마스터 행에 대표필지 성격을 실어 준다', () => {
+    const master = [makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 } })];
+    const reps = [makeParcel({ pnu: 'A', parcelCategory: 'representative' })];
+    const merged = mergeWithRepresentatives(master, reps);
+    expect(merged).toHaveLength(1);
+    // 좌표는 마스터 쪽을 남긴다 — 대표 업로드에는 없다
+    expect(merged[0].coords).not.toBeNull();
+    // 공익 추출 대상이기도 하므로 'both'다. 'representative'로 덮어쓰면 공익직불제
+    // 시트에서 사라져 제출 파일의 행 수가 줄어든다.
+    expect(merged[0].parcelCategory).toBe('both');
+    expect(isRepresentative(merged[0])).toBe(true);
+  });
+
+  /**
+   * 이 티켓(PROJ1-1-35 B)의 목적은 "나란히 놓인 두 숫자가 조용히 어긋나지 않는 것"이다.
+   * 겹침이 있어도 범례와 배지가 같은 수를 말해야 한다.
+   */
+  it('겹침이 있어도 범례 대표 수와 지도 배지 대표 수가 같다 ("추출 선택만" 꺼짐)', () => {
+    const IN = { lat: 36.9, lng: 128.9 };
+    const master = [
+      makeParcel({ pnu: 'R1', coords: IN }),   // 대표필지와 겹친다
+      makeParcel({ pnu: 'X1', coords: IN }),
+    ];
+    const reps = [
+      makeParcel({ pnu: 'R1', coords: IN, parcelCategory: 'representative' }),
+      makeParcel({ pnu: 'R2', coords: IN, parcelCategory: 'representative' }),
+      makeParcel({ pnu: 'R3', coords: IN, parcelCategory: 'representative' }), // 상한 초과
+    ];
+    const selected = [reps[0], reps[1]];
+
+    const mapParcels = mergeWithRepresentatives(master, reps);
+    const counts = countMapLegend(master, reps, selected, SAMPLED_YEARS, true);
+
+    expect(badgeRepresentativeCount(mapParcels)).toBe(3);
+    expect(counts.representative).toBe(3);
+    // 꺼진 모드에서는 초과분도 지도에 있으므로 "결과 제외" 줄이 나오지 않는다
+    expect(counts.representativeExcluded).toBe(0);
+  });
+
+  it('겹침이 없을 때도 두 수가 같다', () => {
+    const IN = { lat: 36.9, lng: 128.9 };
+    const master = [makeParcel({ pnu: 'X1', coords: IN })];
+    const reps = [
+      makeParcel({ pnu: 'R2', coords: IN, parcelCategory: 'representative' }),
+      makeParcel({ pnu: 'R3', coords: IN, parcelCategory: 'representative' }),
+    ];
+    const mapParcels = mergeWithRepresentatives(master, reps);
+    const counts = countMapLegend(master, reps, [reps[0]], SAMPLED_YEARS, true);
+    expect(badgeRepresentativeCount(mapParcels)).toBe(2);
+    expect(counts.representative).toBe(2);
   });
 
   /**

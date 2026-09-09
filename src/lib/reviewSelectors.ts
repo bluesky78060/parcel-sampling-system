@@ -1,4 +1,5 @@
 import type { Parcel, ParcelCategory } from '../types';
+import { markAsRepresentative } from './parcelCategory';
 import { keySetOf, parcelMatchKey } from './parcelKey';
 
 /**
@@ -17,20 +18,40 @@ import { keySetOf, parcelMatchKey } from './parcelKey';
  *
  * 키가 없는 대표필지는 마스터와 같은 필지인지 판정할 수 없으므로 **새 것으로 본다.**
  * 접으면 조용히 사라지는데, 대표필지는 반드시 조사해야 하는 고정 관측점이다.
+ *
+ * **겹치는 행에는 대표필지 성격을 실어 준다.** 마스터 행을 남기면 그 행의
+ * `parcelCategory`는 파싱 기본값 `'public-payment'`이고(`applyColumnMapping`의 기본
+ * 인자 — `AnalyzePage`는 마스터에 그 인자를 넘기지 않는다), 그러면 대표필지가
+ * `isRepresentative`에서 거짓이 되어 **지도에 초록 별이 아니라 파란 원으로 찍힌다.**
+ * 반드시 조사해야 하는 고정 관측점을 평범한 필지로 그리는 것이라 현장에 나쁜 신호다.
+ * 지도 배지의 대표 수도 겹친 만큼 적게 세어졌다(실측: 겹침 1 / 대표 3 → 배지 2).
+ *
+ * 선정 결과 경로(`buildMapSelectedParcels`)는 `categoryByKey`로 카테고리를 다시 써 줘
+ * 이 구멍이 없었다. "추출 선택만"을 끈 모드만 재기입이 없어 갈라져 있었다.
+ *
+ * `markAsRepresentative`를 쓴다 — 공익 추출분이면 `'both'`가 되어 양쪽 성격을 다
+ * 유지한다. 대표필지 시트에서만 보이게 덮어쓰면 제출 파일의 행 수가 줄어든다.
  */
 export function mergeWithRepresentatives(
   allParcels: Parcel[],
   representativeParcels: Parcel[],
 ): Parcel[] {
   if (representativeParcels.length === 0) return allParcels;
-  const existingKeys = new Set(
-    allParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
+  const repKeys = keySetOf(representativeParcels, parcelMatchKey);
+
+  const tagged = allParcels.map((p) => {
+    const key = parcelMatchKey(p);
+    if (key === null || !repKeys.has(key)) return p;
+    const cat = markAsRepresentative(p.parcelCategory);
+    return cat === p.parcelCategory ? p : { ...p, parcelCategory: cat };
+  });
+
+  const existingKeys = keySetOf(allParcels, parcelMatchKey);
   const newReps = representativeParcels.filter((p) => {
     const key = parcelMatchKey(p);
     return key === null || !existingKeys.has(key);
   });
-  return [...allParcels, ...newReps];
+  return [...tagged, ...newReps];
 }
 
 /**
