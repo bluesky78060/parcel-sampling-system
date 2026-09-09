@@ -12,11 +12,31 @@ interface ParcelStore {
   duplicateResult: DuplicateResult | null;
   statistics: Statistics | null;
 
+  /**
+   * 아래 `set*`는 **적재용**이다 — 방금 파싱한 파일에서 만든 값으로 통째 교체한다.
+   * 인자가 스토어에서 온 것이 아니므로 낡을 수가 없다. 반대로 스토어를 읽어
+   * 고쳐 쓰는 것은 전부 `update*`이며, 그쪽은 **함수형만** 받는다.
+   */
   setAllParcels: (parcels: Parcel[]) => void;
   setSampledByYear: (byYear: Record<number, Parcel[]>) => void;
   setRepresentativeParcels: (parcels: Parcel[]) => void;
   setDuplicateResult: (result: DuplicateResult) => void;
-  updateParcels: (parcels: Parcel[]) => void;
+
+  /**
+   * `allParcels`를 읽고-고쳐-쓴다.
+   *
+   * **배열을 직접 받지 않는다.** 예전 시그니처(`(parcels: Parcel[]) => void`)는
+   * 전체 교체였고, 호출자가 `await` 앞에서 읽어 둔 배열을 넘기면 기다리는 동안
+   * 들어온 쓰기가 전부 사라졌다(PROJ1-1-44: 좌표 변환 중 생성한 PNU 유실).
+   *
+   * 그때 고친 것은 호출부 두 곳의 **관례**였다 — "await 뒤에는 getState()로 다시
+   * 읽는다". 관례는 다음에 추가될 async 핸들러를 막지 못한다. 함수형만 받으면
+   * 읽기가 zustand의 `set` 안에서 원자적으로 일어나므로 **어떤 호출자도 낡은
+   * 배열을 넘길 수 없다.** 타입 수준에서 표현 자체가 불가능해진다.
+   */
+  updateParcels: (updater: (prev: Parcel[]) => Parcel[]) => void;
+  /** `representativeParcels`를 읽고-고쳐-쓴다. 이유는 `updateParcels`와 같다. */
+  updateRepresentativeParcels: (updater: (prev: Parcel[]) => Parcel[]) => void;
   calculateStatistics: (totalTarget?: number) => void;
   getEligibleParcels: () => Parcel[];
   getRiList: () => string[];
@@ -36,7 +56,9 @@ export const useParcelStore = create<ParcelStore>((set, get) => ({
   setRepresentativeParcels: (parcels) => set({ representativeParcels: parcels }),
   setDuplicateResult: (result) => set({ duplicateResult: result }),
 
-  updateParcels: (parcels) => set({ allParcels: parcels }),
+  updateParcels: (updater) => set((s) => ({ allParcels: updater(s.allParcels) })),
+  updateRepresentativeParcels: (updater) =>
+    set((s) => ({ representativeParcels: updater(s.representativeParcels) })),
 
   calculateStatistics: (totalTarget = 700) => {
     const { allParcels, representativeParcels } = get();
