@@ -83,9 +83,18 @@ export async function runGeocodingAndCommit(
     applyGeocodedCoords(prev, geocoded),
   );
 
-  // 빈 대표필지에 새 배열을 쓰면 참조만 바뀌어 불필요한 리렌더를 부른다.
-  // 판정도 `set` 안에서 한다 — 밖에서 하면 쓰기 전에 읽은 값으로 판단하는 것이라
-  // 이 파일이 금지하는 바로 그 모양이 된다.
+  // 빈 대표필지에는 `prev`를 그대로 돌려준다.
+  //
+  // ⚠️ **이것은 `set` 자체를 막지 못한다.** zustand의 `setState`는 `partial(state)`가
+  // 새 객체(`{representativeParcels: prev}`)이므로 언제나 새 상태 객체를 만들고
+  // 리스너를 부른다. 실측: 리스너 발화 1회, 상태 객체 동일성 false, 배열 동일성 true.
+  //
+  // 따라서 아끼는 것은 **셀렉터로 이 배열만 구독하는 화면**뿐이다(`ExtractPage`).
+  // 스토어를 통째로 구독하는 세 화면(`AnalyzePage`·`ExportPage`·`ReviewPage`)은
+  // 어차피 리렌더된다 — 배열 동일성 유지를 성능 보장으로 읽으면 안 된다.
+  //
+  // 판정을 `set` 안에서 하는 이유는 따로다. 밖에서 하면 쓰기 전에 읽은 값으로
+  // 판단하는 것이라 이 파일이 금지하는 바로 그 모양이 된다.
   useParcelStore.getState().updateRepresentativeParcels((prev) =>
     prev.length > 0 ? applyGeocodedCoords(prev, geocoded) : prev,
   );
@@ -110,12 +119,28 @@ export interface PnuCommitSummary {
 export function generatePnuAndCommit(overwrite: boolean): PnuCommitSummary {
   // 요약은 갱신 함수 밖으로 꺼낸다. zustand의 `set(fn)`은 `fn`을 **동기적으로
   // 정확히 한 번** 부르므로, 여기서 받는 값은 실제로 쓰인 것의 요약이다.
-  let resultAll!: PnuGenerationResult;
+  //
+  // `let resultAll!: PnuGenerationResult`(definite assignment)를 쓰지 않는다.
+  // 그것은 컴파일러 검사를 끄는데, **13줄 아래 대표필지 updater에는
+  // `if (prev.length === 0) return prev;`라는 조기 반환이 있다.** 두 블록이 시각적으로
+  // 대칭이라 다음 사람이 이쪽에도 같은 가드를 넣는 것은 자연스러운 편집이고,
+  // 그 순간 `resultAll`이 `undefined`가 되어 아래 `.generated`가 TypeError로 죽는다.
+  // 타입 검사도 테스트도 그 편집을 막지 못한다.
+  //
+  // 담는 그릇을 객체로 두는 것도 이유가 있다. `let x: T | null = null`로 두면
+  // TS의 흐름 분석이 **콜백 안에서만 대입되는 것을 보지 못해** `x`를 `null`로 좁히고,
+  // 그래서 `if (!x) throw` 뒤가 `never`가 되어 **가드 자체가 타입 오류**가 된다
+  // (실측: TS2339 3건). 프로퍼티에는 그 좁히기가 걸리지 않는다.
+  const box: { value?: PnuGenerationResult } = {};
   useParcelStore.getState().updateParcels((prev) => {
     const { updated, result } = generatePnuForParcels(prev, overwrite);
-    resultAll = result;
+    box.value = result;
     return updated;
   });
+  // set(fn)이 fn을 동기적으로 한 번 부른다는 가정이 깨지면 여기서 드러난다.
+  // 조용한 undefined 역참조보다 낫다.
+  if (!box.value) throw new Error('updateParcels의 갱신 함수가 실행되지 않았습니다');
+  const resultAll = box.value;
 
   // 세 값을 **전부** 합친다. 예전에는 `generated`만 합치고 `skipped`·`errors`는
   // 공익 쪽에서만 가져와, 대표필지가 매핑조차 안 돼도 화면에 "생성 n건, 오류 없음"이
