@@ -102,9 +102,15 @@ export function ReviewPage() {
 
   const riList = useMemo(() => getRiList(), [getRiList]);
 
-  // 범례는 지도와 **같은 전제**로 세어야 한다. 아래 `<KakaoMap parcels={...}>`가
+  // 범례는 지도와 같은 **모드**로 세어야 한다. 아래 `<KakaoMap parcels={...}>`가
   // 넘기는 배열과 같은 판단(`showSelectedOnly`)을 그대로 넘긴다 — 여기서 갈라지면
   // 범례와 지도 배지의 숫자가 조용히 어긋난다.
+  //
+  // ⚠️ **맞춘 것은 모드 축뿐이다.** 지도는 `useMarkerLayer`에서 세 번 더 거른다 —
+  // `filterRi`, `categoryFilter`, 봉화군 경계(`isInBonghwa`). 범례는 그 셋을
+  // 모델링하지 않으므로 **필터를 켜면 두 숫자는 여전히 갈린다**(배지만 줄어든다).
+  // 선재 상태이고 이 티켓 범위 밖이다. 거기까지 맞추려면 범례도 필터 적용 후
+  // 배열에서 세야 한다.
   const mapLegendCounts = useMemo(
     () =>
       countMapLegend(
