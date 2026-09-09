@@ -234,14 +234,67 @@ describe('countMapLegend', () => {
   /**
    * 대표필지는 대표필지 배열에서 세고, 마스터 순회에서는 건너뛴다.
    * 건너뛰지 않으면 마스터에도 있는 대표필지가 두 번 세어진다.
+   *
+   * 예전에는 `selectedParcels`를 비워 두고 이 성질을 봤다. 그런데 결과에 든
+   * 대표필지는 실제로는 **언제나** 그 배열에 있으므로(`repLimited`가 들어간다),
+   * 빈 배열은 현실에 없는 상태였다. 아래 '결과 제외' 계약이 생기면서 그 픽스처가
+   * "상한에 걸려 빠진 대표필지"를 뜻하게 됐다 — 픽스처를 현실에 맞춘다.
+   * 단언 자체(두 번 세지 않는다)는 그대로다.
    */
   it('마스터에도 있는 대표필지를 두 번 세지 않는다', () => {
     const rep = makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 } });
     const master = makeParcel({ pnu: 'A', coords: { lat: 36.9, lng: 128.9 } });
-    const counts = countMapLegend([master], [rep], [], years);
+    const counts = countMapLegend([master], [rep], [rep], years);
     expect(counts.representative).toBe(1);
     expect(counts.unselected).toBe(0);
     expect(counts.selected).toBe(0);
+  });
+
+  /**
+   * **PROJ1-1-35 B.** `repCap`(리별 상한)을 넘은 대표필지는
+   * `result.selectedParcels`에 들어가지 않아 지도에도 마커가 없다. 그런데 범례는
+   * 업로드 **전량**을 세고 지도 배지는 실제 마커를 세어, 나란히 놓인 두 숫자가
+   * 조용히 어긋났다(범례 "대표 260" / 배지 "대표 200").
+   *
+   * 범례가 배지와 같은 기준으로 세고, 차이 나는 건수를 따로 밝힌다.
+   */
+  it('상한에 걸려 결과에서 빠진 대표필지는 지도 기준에서 빼고 따로 센다', () => {
+    const kept = makeParcel({ pnu: 'REP_KEPT', coords: { lat: 36.9, lng: 128.9 } });
+    const dropped = makeParcel({ pnu: 'REP_OVER', coords: { lat: 36.9, lng: 128.9 } });
+    const counts = countMapLegend([], [kept, dropped], [kept], years);
+    expect(counts.representative).toBe(1);
+    expect(counts.representativeExcluded).toBe(1);
+    // 제외분을 좌표 미변환으로 흘려보내면 "좌표 변환을 다시 하라"는 엉뚱한 안내가 된다
+    expect(counts.noCoords).toBe(0);
+  });
+
+  it('결과에 든 대표필지가 좌표를 못 얻었으면 제외가 아니라 좌표 미변환이다', () => {
+    const rep = makeParcel({ pnu: 'REP_A', coords: null });
+    const counts = countMapLegend([], [rep], [rep], years);
+    expect(counts.noCoords).toBe(1);
+    expect(counts.representative).toBe(0);
+    expect(counts.representativeExcluded).toBe(0);
+  });
+
+  /**
+   * 키를 만들 수 없는 대표필지는 `buildMapSelectedParcels`가 `key !== null`로 걸러
+   * 지도에 그리지 않는다. 범례도 같은 판정을 해야 배지와 맞는다.
+   */
+  it('키가 없어 지도에 못 그리는 대표필지도 제외로 센다', () => {
+    const keyless = makeParcel({ pnu: '', address: '', parcelId: '', coords: { lat: 36.9, lng: 128.9 } });
+    const counts = countMapLegend([], [keyless], [keyless], years);
+    expect(counts.representative).toBe(0);
+    expect(counts.representativeExcluded).toBe(1);
+  });
+
+  it('전량이 결과에 들어가면 제외는 0이다', () => {
+    const reps = [
+      makeParcel({ pnu: 'R1', coords: { lat: 36.9, lng: 128.9 } }),
+      makeParcel({ pnu: 'R2', coords: { lat: 36.9, lng: 128.9 } }),
+    ];
+    const counts = countMapLegend([], reps, reps, years);
+    expect(counts.representative).toBe(2);
+    expect(counts.representativeExcluded).toBe(0);
   });
 
   it('부적격이고 기채취도 아니면 어디에도 안 센다', () => {

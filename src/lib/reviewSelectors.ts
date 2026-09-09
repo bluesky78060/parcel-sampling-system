@@ -1,5 +1,5 @@
 import type { Parcel, ParcelCategory } from '../types';
-import { parcelMatchKey } from './parcelKey';
+import { keySetOf, parcelMatchKey } from './parcelKey';
 
 /**
  * 결과 검토 화면의 파생 계산.
@@ -117,7 +117,18 @@ export function isParcelSelected(parcel: Parcel, selectedParcels: Parcel[]): boo
 
 export interface MapLegendCounts {
   selected: number;
+  /** 지도에 실제로 찍히는 대표필지 (결과에 포함되고 좌표가 있는 것) */
   representative: number;
+  /**
+   * 업로드됐지만 결과에 없어 지도에 찍히지 않는 대표필지.
+   *
+   * 대부분은 `representativeTarget` 상한(`limitRepresentativesByRi`)에 걸린 초과분이고,
+   * 식별 정보가 없어 키를 만들 수 없는 것도 여기 들어간다. 어느 쪽이든 지도에는 없다.
+   *
+   * 예전에는 범례가 업로드 **전량**을 세고 지도 배지는 실제 마커를 세어,
+   * 나란히 놓인 두 숫자가 "대표 260" / "대표 200"으로 조용히 어긋났다.
+   */
+  representativeExcluded: number;
   unselected: number;
   /** 연도 → 그 해에 채취된 필지 수. `MapLegend`가 연도로 찾아가므로 순서에 기대지 않는다 */
   sampledByYear: Record<number, number>;
@@ -135,21 +146,29 @@ export function countMapLegend(
   selectedParcels: Parcel[],
   sampledYears: readonly [number, number],
 ): MapLegendCounts {
-  const selectedKeys = new Set(
-    selectedParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
-  const repKeys = new Set(
-    representativeParcels.map(parcelMatchKey).filter((k): k is string => k !== null),
-  );
+  const selectedKeys = keySetOf(selectedParcels, parcelMatchKey);
+  const repKeys = keySetOf(representativeParcels, parcelMatchKey);
 
   let selected = 0;
   let representative = 0;
+  let representativeExcluded = 0;
   let unselected = 0;
   let noCoords = 0;
   const sampledByYear: Record<number, number> = { [sampledYears[0]]: 0, [sampledYears[1]]: 0 };
 
-  // 대표필지는 여기서 센다 (좌표 있는 것만)
+  // 대표필지는 여기서 센다.
+  //
+  // **결과에 든 것만 지도에 있다.** `repCap`(리별 상한)을 넘은 초과분은
+  // `result.selectedParcels`에 들어가지 않으므로 마커도 만들어지지 않는다.
+  // 그것을 범례에서 함께 세면 배지와 어긋난다 — 초과분은 따로 센다.
   for (const p of representativeParcels) {
+    const key = parcelMatchKey(p);
+    // 키가 없으면 결과에 있는지 판정할 수 없고, 지도도 키 없는 필지는 그리지 않는다
+    // (`buildMapSelectedParcels`가 `key !== null`로 거른다). 실제와 맞춰 제외로 센다.
+    if (key === null || !selectedKeys.has(key)) {
+      representativeExcluded++;
+      continue;
+    }
     if (p.coords) representative++;
     else noCoords++;
   }
@@ -170,5 +189,5 @@ export function countMapLegend(
     }
   }
 
-  return { selected, representative, unselected, sampledByYear, noCoords };
+  return { selected, representative, representativeExcluded, unselected, sampledByYear, noCoords };
 }
