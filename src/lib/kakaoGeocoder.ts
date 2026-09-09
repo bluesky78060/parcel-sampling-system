@@ -27,6 +27,27 @@ function cacheSet(key: string, value: LatLng): void {
   geocodeCache.set(key, value);
 }
 
+/**
+ * 좌표 캐시 키를 만드는 **유일한 공식.**
+ *
+ * 예전에는 `geocodeAddress`만 `normalizeAddress(normalizeAddressLotNumber(addr))`를
+ * 쓰고 `getCachedCoords`와 `geocodeParcel`의 스냅 좌표 쓰기는 `normalizeAddress(addr)`만
+ * 썼다. 0패딩 주소(`… 운계리 0165-0001`)에서 두 키가 갈려 **전량 캐시 미스**가 났고,
+ * 스냅 좌표는 아무도 읽지 않는 키에 쌓여 `geocodeAddress`가 계속 보정 전 좌표를
+ * 돌려줬다. 둘 다 오류가 아니라 성능 저하·정확도 저하로만 나타나 눈에 띄지 않는다.
+ *
+ * 당시 호출부(`batchGeocoder`)가 `normalizeAddressLotNumber`로 감싸서 막고 있었지만,
+ * 그것은 **다음 호출자가 잊으면 조용히 되살아나는** 종류의 방어다. 그래서 정규화를
+ * 함수 안으로 들인다.
+ *
+ * **이중 적용은 안전하다.** 호출부의 기존 래핑이 남아 있어도 결과가 같다 —
+ * `normalizeAddressLotNumber`가 멱등이기 때문이고, 그 멱등성은
+ * `__tests__/geocodeCacheKey.test.ts`에서 표기별로 고정해 두었다.
+ */
+function coordCacheKey(address: string): string {
+  return normalizeAddress(normalizeAddressLotNumber(address));
+}
+
 /** pnuFailCache에 항목 추가 (크기 초과 시 가장 오래된 항목 제거) */
 function pnuFailCacheAdd(pnu: string): void {
   if (pnuFailCache.size >= MAX_PNU_FAIL_CACHE_SIZE) {
@@ -409,8 +430,9 @@ export async function geocodeParcel(address: string, pnu?: string): Promise<LatL
     if (vworldKey) {
       const snapped = await snapToPolygonCentroid(approxCoord, pnu, vworldKey);
       if (snapped) {
-        // 스냅된 좌표를 캐시에 덮어쓰기
-        const cacheKey = normalizeAddress(address);
+        // 스냅된 좌표를 캐시에 덮어쓰기 — `geocodeAddress`가 읽는 키와 같아야
+        // 실제로 덮어써진다(예전에는 갈려 있어 보정 전 좌표가 계속 나왔다).
+        const cacheKey = coordCacheKey(address);
         cacheSet(cacheKey, snapped);
         setToIDB(cacheKey, snapped);
         return snapped;
@@ -502,7 +524,7 @@ export async function geocodeAddress(rawAddress: string): Promise<LatLng | null>
   // VWORLD가 선행 0을 인식하지 못하므로 조회용으로만 정규화한다.
   // (표시·엑셀에 나가는 주소는 원본 그대로 둔다)
   const address = normalizeAddressLotNumber(rawAddress);
-  const cacheKey = normalizeAddress(address);
+  const cacheKey = coordCacheKey(rawAddress);
 
   if (geocodeCache.has(cacheKey)) {
     return geocodeCache.get(cacheKey)!;
@@ -695,10 +717,12 @@ async function geocodeKakao(address: string, apiKey: string): Promise<LatLng | n
 
 /**
  * 캐시에서 좌표 조회 (API 호출 없이)
+ *
+ * 원본 표기 그대로 넘겨도 된다 — 0패딩 정규화를 안에서 한다.
+ * 호출부가 미리 `normalizeAddressLotNumber`를 거쳐 넘겨도 결과는 같다(멱등).
  */
 export function getCachedCoords(address: string): LatLng | null {
-  const key = normalizeAddress(address);
-  return geocodeCache.get(key) ?? null;
+  return geocodeCache.get(coordCacheKey(address)) ?? null;
 }
 
 /**
