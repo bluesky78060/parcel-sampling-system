@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "test": "vitest run",
+    "test": "npm run verify:export-format && vitest run",
+    "verify:export-format": "node scripts/verify-export-format.mjs",
     "test:watch": "vitest",
     "preview": "vite preview"
   },

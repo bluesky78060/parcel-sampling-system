@@ -100,7 +100,13 @@ export function generatePnuAndCommit(overwrite: boolean): PnuCommitSummary {
   );
   st.updateParcels(updatedAll);
 
+  // 세 값을 **전부** 합친다. 예전에는 `generated`만 합치고 `skipped`·`errors`는
+  // 공익 쪽에서만 가져와, 대표필지가 매핑조차 안 돼도 화면에 "생성 n건, 오류 없음"이
+  // 떴다. 화면은 이 요약을 그대로 찍으므로(생성/기존 유지/매핑 실패) 담당자는
+  // PNU가 다 채워진 줄 알고 다음 단계로 넘어간다.
   let repGenerated = 0;
+  let repSkipped = 0;
+  let repErrors: string[] = [];
   if (st.representativeParcels.length > 0) {
     const { updated: updatedRep, result: resultRep } = generatePnuForParcels(
       st.representativeParcels,
@@ -108,11 +114,16 @@ export function generatePnuAndCommit(overwrite: boolean): PnuCommitSummary {
     );
     st.setRepresentativeParcels(updatedRep);
     repGenerated = resultRep.generated;
+    repSkipped = resultRep.skipped;
+    repErrors = resultRep.errors;
   }
 
   return {
     generated: resultAll.generated + repGenerated,
-    skipped: resultAll.skipped,
-    errors: [...new Set(resultAll.errors)].slice(0, 10),
+    skipped: resultAll.skipped + repSkipped,
+    // 양쪽을 합친 뒤 같은 리를 한 줄로 접는다(같은 리가 양쪽에 있는 것이 흔하다).
+    // `slice(10)`은 화면 표시용 상한일 뿐이다 — 오류 유무는 `errors.length > 0`으로
+    // 판단하므로, 잘려도 "오류 없음"으로 보이지는 않는다.
+    errors: [...new Set([...resultAll.errors, ...repErrors])].slice(0, 10),
   };
 }
