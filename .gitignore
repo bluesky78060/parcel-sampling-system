@@ -30,3 +30,6 @@ dist-ssr
 
 # OMC 런타임 상태 (커밋 대상 아님)
 .omc/
+
+# graft 인덱스 캐시 (커밋 대상 아님)
+/graft/
